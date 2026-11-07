@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 构建产物
+build/
+dist/
+*.spec
+
+# 系统/本地
+.DS_Store
+Thumbs.db
+config.json
+*.log
+
+# 安装包产物
+release/
+
+# 运行时封面/头图缓存与用户导入的壁纸/截图
+cover_cache/
+media/
+
+# 重命名遗留的构建目录
+dist_*/
+build_*/
