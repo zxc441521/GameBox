@@ -651,12 +651,20 @@ _ALL_OPENERS = (urllib.request.build_opener(urllib.request.ProxyHandler({})),) +
 
 
 def _open_url(url, timeout=20):
-    """依次尝试各 opener，返回 response；全部失败则抛最后一个异常。"""
+    """依次尝试各 opener，返回 response；全部失败则抛最后一个异常。
+
+    整体耗时以 timeout 为上限：每个 opener 只分到剩余时间（单次最多 8s），
+    避免「直连挂满 20s + 三个代理各挂 20s」把一次检查拖到一分多钟。
+    """
     req = urllib.request.Request(url, headers=UA)
     last = None
+    deadline = time.time() + max(1.0, float(timeout))
     for opener in _ALL_OPENERS:
+        left = deadline - time.time()
+        if left <= 0.3:
+            break
         try:
-            return opener.open(req, timeout=timeout)
+            return opener.open(req, timeout=min(left, 8.0))
         except Exception as e:
             last = e
     raise last or OSError("cannot open " + url)
@@ -732,13 +740,18 @@ def _parse_atom(raw_text):
 
 
 def _latest_from_atom():
-    """从 Atom 订阅源获取最新版本（不占用 REST API 额度）。"""
-    raw = _web_fetch(f"https://github.com/{GITHUB_REPO}/releases.atom", timeout=10)
+    """从 Atom 订阅源获取最新版本（不占用 REST API 额度）。
+
+    返回 None 表示拿不到订阅源（网络/代理问题）；返回 {"empty": True} 表示订阅源
+    正常但一条 entry 都没有 —— 即仓库还没发布过 Release。两者要分开，才能给用户
+    准确的「网络不通」还是「暂无发布」提示。
+    """
+    raw = _web_fetch(f"https://github.com/{GITHUB_REPO}/releases.atom", timeout=8)
     if not raw:
         return None
     tag, title, body = _parse_atom(raw.decode("utf-8", "replace"))
     if not tag:
-        return None
+        return {"empty": True}
     name = PORTABLE_NAME.format(tag=tag)
     base = f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/"
     return {
@@ -754,7 +767,7 @@ def _latest_from_atom():
 
 def _latest_from_api():
     """从 REST API 获取最新版本资产（Atom 失败或拼名 URL 404 时回退）。"""
-    raw = _web_fetch(GITHUB_LATEST)
+    raw = _web_fetch(GITHUB_LATEST, timeout=12)
     if not raw:
         return None
     try:
@@ -814,18 +827,33 @@ def _latest_from_manifest():
         return None
 
 
-def check_latest():
-    """查询最新 Release，返回 {tag, ver, url, name, body, portable} 或 None。
+def check_latest_ex():
+    """查询最新 Release，返回 (info, status)。
 
-    优先单文件便携版：更新时直接自替换，不跑安装向导、不需要任何确认。
+    status 取值：ok / none（仓库还没有 Release）/ noasset（有 Release 但没 exe 资产）/
+    offline（网络不通或接口异常）。区分这几种情况是为了给用户准确的提示，而不是
+    一律报「检查失败」。
     """
     m = _latest_from_manifest()
     if m and m.get("url"):
-        return m
-    info = _latest_from_atom()
+        return m, "ok"
+    atom = _latest_from_atom()
+    if atom and atom.get("empty"):
+        return None, "none"
+    if atom and atom.get("url"):
+        return atom, "ok"
+    info = _latest_from_api()
     if info and info.get("url"):
-        return info
-    return _latest_from_api()
+        return info, "ok"
+    if atom is None:
+        # 订阅源都取不到，说明 GitHub 不可达（不必再加一次探测请求拖长时间）
+        return None, "offline"
+    return None, "noasset"
+
+
+def check_latest():
+    """查询最新 Release，返回 {tag, ver, url, name, body, portable} 或 None。"""
+    return check_latest_ex()[0]
 
 
 def _idle_update_progress():
@@ -2730,13 +2758,25 @@ class AppCore(QObject):
 
     def check_for_updates(self, manual=False):
         def worker():
-            info = check_latest()
+            info, status = check_latest_ex()
+            _gv_log("update check: status=%s ver=%s" %
+                    (status, (info or {}).get("ver")))
             if not info or not info.get("url"):
                 if manual:
-                    self.ui_call.emit(lambda: self._notify("检查更新失败，请检查网络后重试"))
+                    msg = {
+                        "none": "检查更新：仓库还没有发布版本（当前 v%s）" % VERSION,
+                        "noasset": "检查更新：最新发布里没有可用的 exe 资产",
+                        "offline": "检查更新失败：无法连接 GitHub，请检查网络或代理",
+                    }.get(status, "检查更新失败，请稍后重试")
+                    self.ui_call.emit(lambda: self._notify(msg))
                 return
             if info["ver"] > parse_version(VERSION):
                 ver = ".".join(map(str, info["ver"]))
+                if info.get("portable", True) is False:
+                    # 只有 Setup 安装包时绝不自动替换：否则便携版会被换成安装器
+                    self.ui_call.emit(lambda: self._notify(
+                        "发现新版本 v%s，但该发布没有单文件版，请到 Releases 手动下载" % ver))
+                    return
                 self.update_info = {
                     "ver": ver,
                     "tag": info.get("tag") or ("v" + ver),
@@ -2747,8 +2787,12 @@ class AppCore(QObject):
                 }
                 self.ui_call.emit(lambda: self._notify(
                     "发现新版本 v%s，可在「设置 → 通用 → 版本更新」一键更新" % ver))
-            elif manual:
-                self.ui_call.emit(lambda: self._notify("当前已是最新版本 v%s" % VERSION))
+            else:
+                # 之前查到过的版本可能已被撤销，或本机已换上新版：清掉过期提示
+                self.update_info = None
+                if manual:
+                    self.ui_call.emit(lambda: self._notify(
+                        "当前已是最新版本 v%s" % VERSION))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -2762,7 +2806,9 @@ class AppCore(QObject):
             return
         self._update_busy = True
         self._update_ver = info.get("ver") or ""
-        tmp = os.path.join(BASE_DIR, "GameBox.update.tmp")
+        # 装到 Program Files 等只读目录时落盘到 %TEMP%，否则下载第一步就会 PermissionError
+        tmp_dir = BASE_DIR if _dir_writable(BASE_DIR) else tempfile.gettempdir()
+        tmp = os.path.join(tmp_dir, "GameBox.update.tmp")
         self._set_update_progress("downloading", 0, 0, 0, 0, 0, "正在连接更新服务器…")
 
         def download(url, dest):
@@ -2964,7 +3010,7 @@ def _cleanup_old_exe():
 
 # ---------------- 更新后自动清理遗留安装包 ----------------
 _INSTALLER_NAME_RE = re.compile(
-    r"^(?:GameBox|GameVault)-(?:Setup|Portable)-v(\d+)\.(\d+)\.(\d+)\.exe$",
+    r"^(?:GameBox|GameVault)-(?:Setup|Portable)-v(\d+)(?:\.(\d+))?(?:\.(\d+))?\.exe$",
     re.IGNORECASE)
 
 
@@ -2987,7 +3033,8 @@ def _stale_installer_paths(dirs, current):
             continue
         for name in names:
             m = _INSTALLER_NAME_RE.match(name)
-            if not m or _ver_tuple(".".join(m.groups())) >= cur:
+            # 兼容 v1 / v1.2 / v1.2.3 三种命名，缺失的段按 0 补齐
+            if not m or _ver_tuple(".".join(g for g in m.groups() if g)) >= cur:
                 continue
             p = os.path.join(d, name)
             if not os.path.isfile(p) or os.path.abspath(p).lower() == exe:
@@ -3018,13 +3065,14 @@ def _cleanup_stale_installers(dirs=None, current=None, reason="startup"):
         except Exception as e:
             _gv_log("stale installer cleanup failed: %r" % (e,))
     # 更新中断留下的半下载文件（正常流程里它已被 move 成正式 exe）
-    tmp = os.path.join(BASE_DIR, "GameBox.update.tmp")
-    if os.path.isfile(tmp):
-        try:
-            _win_delete_file(tmp)
-            removed.append(tmp)
-        except Exception:
-            pass
+    for tmp_dir in dict.fromkeys((BASE_DIR, tempfile.gettempdir())):
+        tmp = os.path.join(tmp_dir, "GameBox.update.tmp")
+        if os.path.isfile(tmp):
+            try:
+                _win_delete_file(tmp)
+                removed.append(tmp)
+            except Exception:
+                pass
     _gv_log("installer auto-clean (%s): %d removed" % (reason, len(removed)))
     return removed
 
