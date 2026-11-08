@@ -22,6 +22,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import glob
 import hashlib
 import shutil
+import store          # SQLite 单一数据源（src/store.py）
 try:
     import winreg
 except ImportError:
@@ -65,8 +66,16 @@ if _user32:
             ("SetWindowPos", [wintypes.HWND, ctypes.c_void_p, ctypes.c_int,
                               ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]),
             ("PostMessageW", [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]),
+            ("GetWindowLongW", [wintypes.HWND, ctypes.c_int]),
+            ("SetWindowLongW", [wintypes.HWND, ctypes.c_int, ctypes.c_long]),
+            ("IsZoomed", [wintypes.HWND]),
+            ("IsIconic", [wintypes.HWND]),
         ):
             getattr(_user32, _fn).argtypes = _args
+        _user32.GetWindowLongW.restype = ctypes.c_long
+        _user32.SetWindowLongW.restype = ctypes.c_long
+        _user32.IsZoomed.restype = ctypes.c_int
+        _user32.IsIconic.restype = ctypes.c_int
         _user32.EnumWindows.argtypes = [_WND_ENUM_PROC, wintypes.LPARAM]
     except Exception as e:
         _gv_log("user32 argtypes failed: %r" % (e,))
@@ -153,34 +162,77 @@ def win_topmost(hwnd):
             pass
 
 
-def browser_prompt_hwnds(pid, main_hwnd):
-    """浏览器 beforeunload 弹出的「是否离开应用?」确认框。
+def _cleanup_orphan_browser_windows():
+    """启动时清理上次异常退出残留的 GameBox 浏览器窗口（Edge --app）。
 
-    只按标题识别：v2.4.0 原版还用「窗口面积 < 300000」的启发式，实测会把
-    Chromium 的消息窗口/辅助窗口一并 PostMessage(WM_CLOSE)，导致点 ✕ 后整个
-    浏览器界面跟着消失，只剩孤立的 Qt 询问框。这里收紧为标题匹配。
+    宿主进程被任务管理器/崩溃强杀时，它拉起的 Edge --app 子进程会变孤儿继续驻留，
+    窗口标题仍为「游匣 · GameBox」。这些残留占用资源、干扰新实例（用户会看到旧
+    窗口、或与无边框状态混淆）。本函数在启动新窗口前调用：先 WM_CLOSE 优雅关闭，
+    再对仍存活的窗口进程强杀兜底。
+
+    只匹配标题含「游匣」的窗口（GameBox 专属标题），不会波及用户正常使用的
+    Edge/Chrome 标签页或文件管理器窗口。
     """
-    if not _user32 or pid is None:
-        return []
-    keys = ("离开", "Leave", "leave", "site", "应用", "页面", "重新加载",
-            "要离开", "Changes you made")
-    out = []
-    for hwnd, area, title, _v in enum_top_windows(pid):
-        if hwnd == main_hwnd or not title:
-            continue
-        if any(k in title for k in keys):
-            _gv_log("browser prompt hwnd=%s title=%r" % (hwnd, title))
-            out.append(hwnd)
-    return out
+    if not _user32:
+        return
+    hwnds = []
+    try:
+        @_WND_ENUM_PROC
+        def _cb(hwnd, lp):
+            try:
+                n = _user32.GetWindowTextLengthW(hwnd)
+                if n <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(n + 1)
+                _user32.GetWindowTextW(hwnd, ctypes.cast(buf, ctypes.c_void_p), n + 1)
+                if "游匣" in buf.value:
+                    hwnds.append(int(hwnd))
+            except Exception:
+                pass
+            return True
+        _user32.EnumWindows(_cb, 0)
+    except Exception as e:
+        _gv_log("cleanup orphan windows: enum failed %r" % (e,))
+        return
 
+    if not hwnds:
+        return
 
-def dismiss_browser_prompt(pid, main_hwnd):
-    """收起 Chromium 原生确认框，只保留 Qt 的三选一询问框。"""
-    for hwnd in browser_prompt_hwnds(pid, main_hwnd):
+    pids = set()
+    for hwnd in hwnds:
         try:
-            _user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            _user32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
+            pid = wintypes.DWORD()
+            _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value:
+                pids.add(int(pid.value))
         except Exception:
             pass
+
+    # WM_CLOSE 生效需要一点时间；仍存活的窗口进程强杀兜底（GameBox 用独立
+    # user-data-dir 的 Edge 实例，强杀不影响用户正常浏览器）。
+    if pids:
+        time.sleep(0.4)
+        try:
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            k.OpenProcess.restype = wintypes.HANDLE
+            k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            k.TerminateProcess.restype = wintypes.BOOL
+            k.CloseHandle.argtypes = [wintypes.HANDLE]
+            PROCESS_TERMINATE = 0x0001
+            for pid in pids:
+                try:
+                    h = k.OpenProcess(PROCESS_TERMINATE, False, pid)
+                    if h:
+                        k.TerminateProcess(h, 1)
+                        k.CloseHandle(h)
+                except Exception:
+                    pass
+        except Exception as e:
+            _gv_log("cleanup orphan windows: terminate failed %r" % (e,))
+
+    _gv_log("cleaned %d orphan GameBox window(s)" % len(hwnds))
 
 
 def acquire_single_instance():
@@ -360,6 +412,18 @@ def fmt_last(ts):
         return str(ts)
 
 
+def _last_iso(ts):
+    """把游玩时间统一成可排序的 ISO 字符串；兼容旧数据里的数字时间戳。"""
+    if not ts:
+        return ""
+    if isinstance(ts, (int, float)):
+        try:
+            return datetime.datetime.fromtimestamp(ts).isoformat(timespec="seconds")
+        except Exception:
+            return ""
+    return str(ts)
+
+
 def dir_size(path):
     total = 0
     try:
@@ -438,14 +502,11 @@ def load_config():
         "scan_roots": list(DEFAULT_ROOTS), "launch_overrides": {}, "play_stats": {},
         "web_theme": "dark", "favorites": [], "categories": [], "game_categories": {},
         "manual_games": [], "wallpaper": None, "shots": {}, "view": "grid",
-        "close_action": "exit", "close_ask": True, "steam_libs": [],
-        "geometry": None,
-        # 封面来源：steam=官方 CDN，local=本地图片文件夹，url=自定义 URL 模板
-        "cover_source": "steam", "cover_local_dir": "", "cover_url_template": "",
+        "close_action": "ask", "steam_libs": [],
+        "geometry": None, "cover_version": 1,
     }
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            c = json.load(f)
+        c = STORE.get_config_raw()
         if not isinstance(c, dict):
             c = {}
         roots = c.get("scan_roots")
@@ -467,13 +528,12 @@ def load_config():
             cfg["wallpaper"] = c["wallpaper"]
         cfg["web_theme"] = "light" if c.get("web_theme") == "light" else "dark"
         cfg["view"] = "list" if c.get("view") == "list" else "grid"
-        cfg["close_action"] = "tray" if c.get("close_action") == "tray" else "exit"
-        cfg["close_ask"] = c.get("close_ask", True) is not False
-        src = c.get("cover_source")
-        cfg["cover_source"] = src if src in ("steam", "local", "url") else "steam"
-        for k in ("cover_local_dir", "cover_url_template"):
-            if isinstance(c.get(k), str):
-                cfg[k] = c[k][:1000]
+        ca = c.get("close_action")
+        cfg["close_action"] = ca if ca in ("exit", "tray", "ask") else "ask"
+        try:
+            cfg["cover_version"] = max(1, int(c.get("cover_version", 1)))
+        except (ValueError, TypeError):
+            cfg["cover_version"] = 1
         g = c.get("geometry")
         if isinstance(g, dict) and all(k in g for k in ("x", "y", "w", "h")):
             try:
@@ -488,17 +548,15 @@ def load_config():
 def save_config(cfg):
     keys = ("scan_roots", "launch_overrides", "play_stats", "web_theme", "favorites",
             "categories", "game_categories", "manual_games", "wallpaper", "shots",
-            "view", "close_action", "close_ask", "steam_libs", "geometry",
-            "cover_source", "cover_local_dir", "cover_url_template")
+            "view", "close_action", "steam_libs", "geometry", "cover_version")
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump({k: cfg.get(k) for k in keys}, f, ensure_ascii=False, indent=1)
+        STORE.put_config_raw({k: cfg.get(k) for k in keys})
     except Exception:
         pass
 
 
 # ---------------- OTA 更新（单文件便携版自更新） ----------------
-GITHUB_REPO = "zxc4415/GameBox"
+GITHUB_REPO = "zxc441521/GameBox"
 GITHUB_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 PORTABLE_NAME = "GameBox-Portable-{tag}.exe"   # 单文件免安装版：更新只用它
 SETUP_NAME = "GameBox-Setup-{tag}.exe"         # 仅作为信息兜底，不用于自动更新
@@ -782,6 +840,14 @@ class CoverService(QObject):
     def request_header(self, key, appid):
         self._enqueue("header", key, appid)
 
+    def reset_memory(self):
+        """清缓存后重置内存态，允许同一会话内重新下载（磁盘文件已删除）。"""
+        with self._lock:
+            self.images.clear()
+            self.headers.clear()
+            self._queued.clear()
+            self._failed.clear()
+
     def _enqueue(self, typ, key, appid):
         k = (typ, key)
         with self._lock:
@@ -839,180 +905,6 @@ def cover_service():
     return _COVER_SVC
 
 
-# ---------------- 可配置封面来源 ----------------
-# 除 Steam 官方 CDN 外，还可选择「本地图片文件夹」或「自定义 URL 模板」。
-# 任一自定义来源取图失败都会自动回退：Steam CDN → 本地生成的 SVG 占位图。
-COVER_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
-COVER_SRC_LABELS = {"steam": "Steam 官方 CDN", "local": "本地图片文件夹",
-                    "url": "自定义 URL 模板"}
-_CUSTOM_FAIL = {}          # cache_key -> 上次失败时间，避免反复请求坏源
-_MIME_EXT = ((".jpg", "image/jpeg"), (".png", "image/png"),
-             (".webp", "image/webp"), (".gif", "image/gif"), (".bmp", "image/bmp"))
-
-
-def _cover_norm(s):
-    """归一化名称用于模糊匹配：只保留字母数字与中日韩汉字，转小写。"""
-    return "".join(ch for ch in (s or "").lower()
-                   if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
-
-
-def _sniff_image(raw):
-    """按文件头识别图片，返回 mime；无法识别返回 None（防止把错误页当封面）。"""
-    if not raw or len(raw) < 256:
-        return None
-    if raw[:3] == b"\xff\xd8\xff":
-        return "image/jpeg"
-    if raw[:8] == b"\x89PNG\r\n\x1a\n":
-        return "image/png"
-    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
-        return "image/webp"
-    if raw[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    if raw[:2] == b"BM":
-        return "image/bmp"
-    return None
-
-
-def _cover_candidates(name, en, appid, key):
-    folder = os.path.basename(key or "") if key else ""
-    out = []
-    for v in (name, en, folder, str(appid) if appid else ""):
-        v = (v or "").strip()
-        if v and v not in out:
-            out.append(v)
-    return out
-
-
-def _local_cover_file(directory, name, en, appid, key):
-    """在目录里按 中文名 / 英文名 / 文件夹名 / AppID 匹配图片（只扫一层）。"""
-    if not directory or not os.path.isdir(directory):
-        return None
-    cands = [c for c in (_cover_norm(v) for v in
-                         _cover_candidates(name, en, appid, key)) if c]
-    try:
-        files = [f for f in os.listdir(directory)
-                 if os.path.splitext(f)[1].lower() in COVER_EXTS][:800]
-    except Exception:
-        return None
-    by_norm = {}
-    for f in files:
-        by_norm.setdefault(_cover_norm(os.path.splitext(f)[0]), f)
-    for c in cands:                                  # 1) 名称完全一致
-        if c in by_norm:
-            return os.path.join(directory, by_norm[c])
-    for c in cands:                                  # 2) 包含关系（避免短名误匹配）
-        if len(c) < 3:
-            continue
-        for f in files:
-            n = _cover_norm(os.path.splitext(f)[0])
-            if n and (c in n or (len(n) >= 4 and n in c)):
-                return os.path.join(directory, f)
-    return None
-
-
-def _read_local_cover(directory, name, en, appid, key):
-    fp = _local_cover_file(directory, name, en, appid, key)
-    if not fp:
-        return None
-    try:
-        with open(fp, "rb") as f:
-            raw = f.read(8 * 1024 * 1024)
-        mime = _sniff_image(raw)
-        return (raw, mime) if mime else None
-    except Exception:
-        return None
-
-
-def _url_cover(template, name, en, appid, key):
-    """按模板下载封面并校验文件头。占位符：{name} {en} {appid} {folder} {path}。"""
-    if not template or not template.lower().startswith(("http://", "https://")):
-        return None
-    folder = os.path.basename(key or "") if key else ""
-    vals = {"{name}": urllib.parse.quote(name or ""),
-            "{en}": urllib.parse.quote(en or ""),
-            "{folder}": urllib.parse.quote(folder),
-            "{path}": urllib.parse.quote(key or ""),
-            "{appid}": urllib.parse.quote(str(appid or ""))}
-    url = template
-    for k, v in vals.items():
-        url = url.replace(k, v)
-    try:
-        req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=10) as r:
-            raw = r.read(8 * 1024 * 1024)
-        mime = _sniff_image(raw)
-        return (raw, mime) if mime else None
-    except Exception as e:
-        _gv_log("cover url source failed: %r" % (e,))
-        return None
-
-
-def custom_cover(cfg, name, en, appid, key, typ="cover"):
-    """取自定义来源的封面，返回 (bytes, mime)；失败返回 None 交由调用方回退。"""
-    src = cfg.get("cover_source", "steam")
-    if src not in ("local", "url"):
-        return None
-    ck = hashlib.md5(("%s|%s|%s" % (src, key or (name or ""), typ))
-                     .encode("utf-8", "ignore")).hexdigest()[:20]
-    for ext, mime in _MIME_EXT:                     # 内存外：磁盘缓存优先
-        fp = os.path.join(COVER_CACHE_DIR, "x_" + ck + ext)
-        if os.path.isfile(fp):
-            try:
-                with open(fp, "rb") as f:
-                    return f.read(), mime
-            except Exception:
-                pass
-    if time.time() - _CUSTOM_FAIL.get(ck, 0) < 30:
-        return None
-    if src == "local":
-        got = _read_local_cover(cfg.get("cover_local_dir", ""), name, en, appid, key)
-    else:
-        got = _url_cover(cfg.get("cover_url_template", ""), name, en, appid, key)
-    if not got:
-        _CUSTOM_FAIL[ck] = time.time()
-        return None
-    raw, mime = got
-    ext = next((e for e, m in _MIME_EXT if m == mime), ".jpg")
-    try:
-        os.makedirs(COVER_CACHE_DIR, exist_ok=True)
-        fp = os.path.join(COVER_CACHE_DIR, "x_" + ck + ext)
-        tmp = fp + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(raw)
-        os.replace(tmp, fp)
-    except Exception:
-        pass
-    return raw, mime
-
-
-def cover_source_info(cfg):
-    """设置页展示的来源健康状态，明确告诉用户当前是否可用、失败会怎样。"""
-    src = cfg.get("cover_source", "steam")
-    if src == "steam":
-        return "正在使用 Steam 官方 CDN（按 AppID 获取竖版封面与头图）"
-    if src == "local":
-        d = cfg.get("cover_local_dir", "")
-        if not d:
-            return "未设置文件夹：请选择存放封面图片的目录"
-        if not os.path.isdir(d):
-            return "文件夹不存在：%s（将回退到 Steam / 占位图）" % d
-        try:
-            n = sum(1 for f in os.listdir(d)
-                    if os.path.splitext(f)[1].lower() in COVER_EXTS)
-        except Exception:
-            n = 0
-        return "文件夹可用 · 发现 %d 张图片%s" % (
-            n, "" if n else "（无图片，将回退到 Steam / 占位图）")
-    t = cfg.get("cover_url_template", "")
-    if not t:
-        return "未设置 URL 模板：请填写含 {name} 等占位符的地址"
-    if not t.lower().startswith(("http://", "https://")):
-        return "模板需以 http:// 或 https:// 开头（将回退到 Steam / 占位图）"
-    used = "、".join(k for k in ("{name}", "{en}", "{appid}", "{folder}", "{path}")
-                    if k in t) or "无（所有游戏将请求同一地址）"
-    return "模板已启用 · 使用占位符 %s" % used
-
-
 def resolve_steam(name):
     """通过 Steam 商店搜索，返回 (appid, 中文名)。失败返回 (None, None)。"""
     url = STEAM_SEARCH.format(term=urllib.parse.quote(name))
@@ -1031,14 +923,34 @@ def resolve_steam(name):
 
 
 # ---------------- 数据扫描 ----------------
+def _meta_candidates():
+    """评分/资料库候选路径：优先用户可编辑的外部文件，回退到 exe 内置副本。
+
+    PyInstaller 单文件版会把 data/games.json 解到 sys._MEIPASS；若只读
+    APP_DIR/data/games.json，用户把 exe 放到任意目录时就会读不到评分库，
+    导致所有游戏 score=None / tier=暂无收录。
+    """
+    cands = [os.path.join(DATA_DIR, "games.json"),
+             os.path.join(APP_DIR, "data", "games.json")]
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        cands.append(os.path.join(sys._MEIPASS, "data", "games.json"))
+        cands.append(os.path.join(sys._MEIPASS, "games.json"))
+    seen, out = set(), []
+    for p in cands:
+        ap = os.path.abspath(p)
+        if ap not in seen:
+            seen.add(ap)
+            out.append(ap)
+    return out
+
+
 def load_meta():
-    p = os.path.join(DATA_DIR, "games.json")
-    try:
-        with open(p, encoding="utf-8") as f:
-            rows = json.load(f)
-        return {r["folder"]: r for r in rows}
-    except Exception:
-        return {}
+    """加载游戏元数据（评分/评分档/年份等），来自 SQLite 的 game_meta 表。
+
+    外部 data/games.json 在 Store 初始化时同步进库；文件缺失时 DB 副本仍有效，
+    这正是「评分库漏打包 → 全库无分」的结构性兜底。
+    """
+    return STORE.load_meta()
 
 
 def scan_games(roots=None):
@@ -1085,7 +997,7 @@ def scan_games(roots=None):
 # ---------------- 数据模型 ----------------
 
 # ==================== 游匣 GameBox · 后端核心 ====================
-AUTHOR_NAME = "zxc4415"
+AUTHOR_NAME = "zxc441521"
 AUTHOR_URL = "https://github.com/" + AUTHOR_NAME
 REPO_URL = "https://github.com/" + GITHUB_REPO
 APP_EN = "GameBox"
@@ -1138,6 +1050,18 @@ def _migrate_legacy():
 
 
 _migrate_legacy()
+
+# ---------------- 单一数据源（SQLite） ----------------
+# 旧版 config.json / games_cache.json / meta_cache.json 在 Store 初始化时幂等导入，
+# 文件本身保留为备份；此后所有读写只走 gamebox.db。评分库 data/games.json 也会
+# 落库，即使某次构建漏打包该文件，之前导入的评分仍可正常显示。
+DB_PATH = os.path.join(BASE_DIR, "gamebox.db")
+STORE = store.Store(
+    DB_PATH,
+    meta_candidates=_meta_candidates(),
+    legacy={"config": CONFIG_PATH, "games": GAMES_CACHE, "steam": META_CACHE},
+    log=_gv_log,
+)
 
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_NAME = "GameBox"
@@ -1333,8 +1257,10 @@ class WebBridgeServer(threading.Thread):
         h.send_response(code)
         h.send_header("Content-Type", mime)
         h.send_header("Content-Length", str(len(body)))
-        h.send_header("Cache-Control", "no-store")
-        for k, v in (extra or {}).items():
+        extras = dict(extra or {})
+        # 允许调用方覆盖缓存策略：封面等静态资源用长缓存，避免每次刷新重新拉取
+        h.send_header("Cache-Control", extras.pop("Cache-Control", "no-store"))
+        for k, v in extras.items():
             h.send_header(k, v)
         h.end_headers()
         try:
@@ -1365,6 +1291,22 @@ class WebBridgeServer(threading.Thread):
         if path == "/api/show":
             self.win.ui_call.emit(lambda: self.win.show_ui())
             return self._send(h, 200, '{"ok":true}')
+        if path == "/api/wingetpos":
+            hwnd = self.win.shell.main_hwnd()
+            if hwnd and _user32:
+                r = wintypes.RECT()
+                _user32.GetWindowRect(hwnd, ctypes.byref(r))
+                return self._send(h, 200, json.dumps(
+                    {"x": r.left, "y": r.top,
+                     "w": r.right - r.left, "h": r.bottom - r.top}))
+            return self._send(h, 200, json.dumps({"x": 0, "y": 0, "w": 0, "h": 0}))
+        if path == "/api/winsc":
+            cmd = (q.get("cmd") or ["minimize"])[0]
+            try:
+                self.win.shell.win_command(cmd)
+            except Exception as e:
+                _gv_log("winsc %s failed: %r" % (cmd, e))
+            return self._send(h, 200, '{"ok":true}')
         if path == "/api/notify":
             return self._send(h, 200, json.dumps(
                 {"messages": w.take_notices()}, ensure_ascii=False))
@@ -1375,28 +1317,34 @@ class WebBridgeServer(threading.Thread):
             en = (q.get("en") or [""])[0]
             key = (q.get("key") or [""])[0]
             grp = (q.get("group") or [""])[0]
-            # 1) 用户显式配置的自定义来源优先；取图失败静默回退，不抛给前端
-            try:
-                got = custom_cover(w.config, name, en, appid, key, typ)
-                if got:
-                    return self._send(h, 200, got[0], got[1])
-            except Exception as e:
-                _gv_log("custom cover error: %r" % (e,))
-            # 2) Steam 官方 CDN：先读磁盘缓存，否则 302 交给浏览器直连
+            # Steam 官方 CDN：优先读本地磁盘缓存（长缓存，避免每次刷新重新拉取）
             if appid.isdigit():
-                fn = ("h_" if typ == "header" else "c_") + appid + ".jpg"
+                aid = int(appid)
+                fn = ("h_" if typ == "header" else "c_") + str(aid) + ".jpg"
                 fp = os.path.join(COVER_CACHE_DIR, fn)
-                if os.path.isfile(fp):
+                if os.path.isfile(fp) and os.path.getsize(fp) >= 8000:
                     try:
                         with open(fp, "rb") as f:
-                            return self._send(h, 200, f.read(), "image/jpeg")
+                            return self._send(h, 200, f.read(), "image/jpeg",
+                                              {"Cache-Control":
+                                               "public, max-age=31536000, immutable"})
                     except Exception:
                         pass
-                cdn = STEAM_CDN.format(appid=appid,
+                # 本地未命中：把该 appid 交给后台下载队列落盘（同步完成后即缓存到
+                # 本地），本次仍 302 让浏览器直连 CDN 即时显示，不必等待下载。
+                try:
+                    svc = cover_service()
+                    if typ == "header":
+                        svc.request_header(str(aid), aid)
+                    else:
+                        svc.request(str(aid), aid)
+                except Exception:
+                    pass
+                cdn = STEAM_CDN.format(appid=aid,
                                        fn="header.jpg" if typ == "header"
                                        else "library_600x900.jpg")
                 return self._send(h, 302, b"", "text/plain", {"Location": cdn})
-            # 3) 缺省处理：无 AppID 或来源全失败时直接给本地生成的 SVG 占位图，
+            # 缺省处理：无 AppID 时直接给本地生成的 SVG 占位图，
             #    绝不返回 404 / 坏图；前端的 onerror 回退仍作为第二道保险。
             raw = w.generate_cover(name or "游戏", grp, key or name or "fallback")
             if raw:
@@ -1464,7 +1412,7 @@ class WebBridgeServer(threading.Thread):
         return self._send(h, 200, data, mime)
 
     FILE_ACTIONS = frozenset(("chooseLaunch", "pickShots", "pickRoot",
-                              "pickGame", "pickWallpaper", "pickCoverDir"))
+                              "pickGame", "pickWallpaper"))
 
     def _post(self, h):
         path = urllib.parse.urlsplit(h.path).path
@@ -1473,12 +1421,6 @@ class WebBridgeServer(threading.Thread):
             raw = h.rfile.read(n) if n else b""
         except Exception as e:
             return self._send(h, 400, json.dumps({"error": str(e)}))
-
-        # beforeunload 只能发 sendBeacon：收到即刻在主线程弹关闭选项
-        if path == "/api/window-close":
-            _gv_log("window-close beacon received")
-            self.win.ui_call.emit(lambda: self.win.on_close_intent())
-            return self._send(h, 200, '{"ok":true}')
 
         # 窗口尺寸/位置：收到即刻落盘，下次启动恢复（来自网页 sendBeacon / fetch）
         if path == "/api/geometry":
@@ -1503,6 +1445,17 @@ class WebBridgeServer(threading.Thread):
                     save_config(self.win.config)
                 except (ValueError, TypeError):
                     pass
+            return self._send(h, 200, '{"ok":true}')
+
+        # 页面内自定义标题栏拖动 / 缩放：直接移动窗口，缺失维度从当前矩形继承
+        if path == "/api/winpos":
+            try:
+                d = json.loads(raw.decode("utf-8") or "{}")
+                self.win.shell.set_window_rect(
+                    int(d.get("x", -1)), int(d.get("y", -1)),
+                    int(d.get("w", -1)), int(d.get("h", -1)))
+            except Exception as e:
+                _gv_log("winpos failed: %r" % (e,))
             return self._send(h, 200, '{"ok":true}')
 
         if path != "/api/action":
@@ -1646,6 +1599,43 @@ class WebShell(QObject):
             _gv_log("restore geometry failed: %r" % (e,))
             self._geo_pending = None
 
+    def win_command(self, cmd):
+        """页面内窗口按钮：minimize / maximize / restore。"""
+        hwnd = self.main_hwnd()
+        if not hwnd or not _user32:
+            return
+        try:
+            if cmd == "minimize":
+                _user32.ShowWindow(hwnd, 6)        # SW_MINIMIZE
+            elif cmd == "maximize":
+                _user32.ShowWindow(hwnd, 3 if not _user32.IsZoomed(hwnd) else 9)
+            elif cmd == "restore":
+                _user32.ShowWindow(hwnd, 9)        # SW_RESTORE
+        except Exception as e:
+            _gv_log("win_command %s failed: %r" % (cmd, e))
+
+    def set_window_rect(self, x, y, w, h):
+        """移动 / 缩放窗口；传入 -1 的维度从当前矩形继承，避免覆盖未知值。"""
+        hwnd = self.main_hwnd()
+        if not hwnd or not _user32:
+            return
+        try:
+            r = wintypes.RECT()
+            _user32.GetWindowRect(hwnd, ctypes.byref(r))
+            cx, cy, cw, ch = r.left, r.top, r.right - r.left, r.bottom - r.top
+            if w is None or w < 0:
+                w = cw
+            if h is None or h < 0:
+                h = ch
+            if x is None or x < 0:
+                x = cx
+            if y is None or y < 0:
+                y = cy
+            _user32.SetWindowPos(hwnd, None, int(x), int(y), int(w), int(h),
+                                 0x0004 | 0x0010)   # SWP_NOZORDER | SWP_NOACTIVATE
+        except Exception as e:
+            _gv_log("set_window_rect failed: %r" % (e,))
+
     def _watch(self):
         if self.proc is None:
             self._timer.stop()
@@ -1678,9 +1668,7 @@ class AppCore(QObject):
         self._scanning = False
         self._notices = []
         self._quitting = False
-        self._close_busy = False
-        self._close_intent_time = 0.0
-        self._cover_version = 1            # 切换封面来源时递增，强制浏览器重新取图
+        self._cover_version = int(self.config.get("cover_version", 1) or 1)
         self._steam_map = {}
         self.update_info = None
         # 单文件自更新进度：前端每 250ms 轮询 /api/update-progress
@@ -1701,22 +1689,6 @@ class AppCore(QObject):
             fn()
         except Exception as e:
             _gv_log("ui dispatch error: %r" % (e,))
-
-    def _refresh_cover_cache(self):
-        """清除封面磁盘缓存并重置自定义来源的失败抑制，返回删除数量。"""
-        n = 0
-        try:
-            for f in os.listdir(COVER_CACHE_DIR):
-                if f.startswith(("x_", "c_", "h_")):
-                    try:
-                        os.remove(os.path.join(COVER_CACHE_DIR, f))
-                        n += 1
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        _CUSTOM_FAIL.clear()
-        return n
 
     def _notify(self, msg):
         self._notices.append(str(msg))
@@ -1766,97 +1738,26 @@ class AppCore(QObject):
             QApplication.instance().quit()
 
     # ---------- 关闭行为 ----------
-    # v2.4.0 实现（回滚）：beforeunload 阻止窗口立即关闭，收到 beacon 即刻按设置
-    # 决策；Qt 三选一询问框出现时界面仍可见。v2.5.0 的「延迟 350ms + 页面身份」
-    # 会把真实关闭误判成刷新，导致点 ✕ 不弹询问框，故整体回退。
-    def _dismiss_close_prompt(self, attempt=0):
-        """收起浏览器自带的「是否离开应用?」确认框，让界面在询问期间保持可见。"""
-        if self._quitting or attempt > 6:
-            return
-        pid = self.shell.proc.pid if self.shell.proc is not None else None
-        dismiss_browser_prompt(pid, self.shell.main_hwnd())
-        QTimer.singleShot(90, lambda: self._dismiss_close_prompt(attempt + 1))
-
-    def _ensure_visible_for_prompt(self):
-        """弹询问框前确保界面窗口可见。
-
-        部分 Chromium/Edge 版本对「非手势」关闭不尊重 beforeunload 的
-        preventDefault，窗口会先消失。窗口只是隐藏时 ShowWindow 即可；
-        已销毁时须先停掉旧进程再拉起，否则只剩一个孤立弹窗。
-        """
-        def visible_main():
-            # 只认「本进程 + 可见 + 标题匹配」的真实窗口；窗口关闭后
-            # main_hwnd() 仍可能返回一个隐藏/僵尸 hwnd，不能据此判断。
-            if self.shell.proc is None:
-                return None
-            cand = [w for w in enum_top_windows(self.shell.proc.pid)
-                    if w[3] and any(k in w[2] for k in BROWSER_TITLE_KEYS)]
-            return max(cand, key=lambda w: w[1])[0] if cand else None
-
-        hwnd = visible_main()
-        if hwnd:
-            win_show(hwnd, True)
-            win_foreground(hwnd)
-            return
-        _gv_log("close prompt: browser window gone, relaunching UI")
-        self.shell.stop()
-        self.shell.start()
-        for _ in range(60):
-            hwnd = visible_main()
-            if hwnd:
+    # 无边框模式：系统标题栏已在启动后去除，X 由页面内自定义标题栏承载。点 ✕ 只弹
+    # 页面内三选一询问框（不关窗）；退出/托盘/取消均由页面经 /api 通知宿主执行。
+    # 这里仅保留「最小化到托盘」的宿主侧逻辑，Alt+F4 等系统级关闭走 on_window_closed 兜底。
+    def _to_tray(self):
+        """最小化到托盘：只隐藏窗口、不退出进程，后台继续记录游玩时长。"""
+        hwnd = self.shell.main_hwnd()
+        alive = bool(hwnd) and self.shell.proc is not None and self.shell.proc.poll() is None
+        if self.tray is None:
+            # 没有托盘就重新打开界面，而不是静默退出
+            if alive and hwnd:
                 win_show(hwnd, True)
                 win_foreground(hwnd)
-                return
-            QApplication.processEvents()
-            time.sleep(0.1)
-
-    def on_close_intent(self):
-        """用户点窗口 X：beforeunload 的 sendBeacon 在窗口消失前送达，先问再决定。"""
-        if self._quitting or getattr(self, "_close_busy", False):
-            return
-        self._close_busy = True
-        self._close_intent_time = time.time()
-        _gv_log("close intent: prompting while window is visible")
-        try:
-            self._dismiss_close_prompt()
-            if self.config.get("close_ask", True):
-                self._ensure_visible_for_prompt()
-                choice, remember = self._prompt_close()
             else:
-                choice = "tray" if self.config.get("close_action") == "tray" else "exit"
-                remember = False
-            if remember and choice in ("tray", "exit"):
-                self.config["close_action"] = choice
-                self.config["close_ask"] = False
-                save_config(self.config)
-            self._finish_close(choice)
-        finally:
-            self._close_busy = False
-
-    def _prompt_close(self):
-        """返回 (choice, remember)，choice ∈ tray / exit / cancel。"""
-        box = QMessageBox(None)
-        box.setWindowTitle("关闭 " + APP_NAME)
-        box.setText("关闭窗口时希望如何处理？")
-        box.setInformativeText("最小化到托盘后程序会继续在后台记录游玩时长，"
-                               "双击托盘图标可恢复界面。")
-        box.setIcon(QMessageBox.Question)
-        box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
-        b_tray = box.addButton("最小化到托盘(&T)", QMessageBox.AcceptRole)
-        b_exit = box.addButton("退出程序(&X)", QMessageBox.DestructiveRole)
-        b_cancel = box.addButton("取消(&C)", QMessageBox.RejectRole)
-        box.setDefaultButton(b_tray)      # 回车默认最小化到托盘，不误退出
-        chk = QCheckBox("记住我的选择，不再提示")
-        box.setCheckBox(chk)
-        try:
-            win_topmost(int(box.winId()))
-        except Exception:
-            pass
-        box.exec_()
-        clicked = box.clickedButton()
-        if clicked is None or clicked is b_cancel:
-            return "cancel", False
-        return ("tray" if clicked is b_tray else "exit"), chk.isChecked()
+                self.shell.start()
+            return
+        if alive and hwnd:
+            self._save_geometry_from_window(hwnd)   # 收进托盘前记录窗口位置
+            win_show(hwnd, False)      # 只隐藏，不销毁进程，托盘恢复无需重建
+        self.shell.hidden = True
+        self._tray_hint()
 
     def _save_geometry_from_window(self, hwnd):
         if not hwnd or not _user32:
@@ -1870,32 +1771,6 @@ class AppCore(QObject):
             save_config(self.config)
         except Exception:
             pass
-
-    def _finish_close(self, choice):
-        _gv_log("close decision=%s" % choice)
-        hwnd = self.shell.main_hwnd()
-        alive = bool(hwnd) and self.shell.proc is not None and self.shell.proc.poll() is None
-        if choice == "exit":
-            self.quit_app()
-            return
-        if choice == "tray":
-            if self.tray is None:
-                self._notify("系统托盘不可用，窗口已保留")
-                if hwnd:
-                    win_show(hwnd, True)
-                    win_foreground(hwnd)
-                return
-            if alive and hwnd:
-                self._save_geometry_from_window(hwnd)   # 收进托盘前记录窗口位置
-                win_show(hwnd, False)      # 只隐藏，不销毁进程，托盘恢复无需重建
-                self.shell.hidden = True
-            self._tray_hint()
-            return
-        if alive and hwnd:                  # 取消：界面一直在，无需重开
-            win_show(hwnd, True)
-            win_foreground(hwnd)
-        else:
-            self.shell.start()
 
     def _tray_hint(self):
         if self.tray is not None:
@@ -1914,38 +1789,73 @@ class AppCore(QObject):
         return False
 
     def on_window_closed(self):
-        """兜底：未收到关闭通知（beacon 未送达，如单文件构建关闭时序差异）时仍给出关闭选项。
+        """系统标题栏下点 ✕ / Alt+F4 关闭界面窗口时，按设置里的关闭行为执行。
 
-        弹窗前确保界面窗口可见，避免「窗口先消失才弹窗」。与 beacon 理想路径通过
-        _close_busy / _close_intent_time 互斥，不会二次弹窗。
+        - ask（默认）：弹出三选一询问框（退出程序 / 最小化到托盘 / 取消）；
+        - exit：直接退出程序；
+        - tray：界面关闭但进程驻留后台继续计时，双击托盘图标可恢复界面。
+        本方法运行在 GUI 线程（由 _watch 定时回调触发），可安全弹出 Qt 模态框。
         """
         if self._quitting:
             return
-        if time.time() - getattr(self, "_close_intent_time", 0) < 20:
-            return                       # 已由 on_close_intent 询问过，避免二次弹窗
-        self._close_busy = True
-        try:
-            # 窗口已真的不在时才拉起，确保弹窗时界面可见
-            self._ensure_visible_for_prompt()
-            if self.config.get("close_ask", True):
-                choice, remember = self._prompt_close()
-                if remember and choice in ("tray", "exit"):
-                    self.config["close_action"] = choice
-                    self.config["close_ask"] = False
-                    save_config(self.config)
-            else:
-                choice = "tray" if self.config.get("close_action") == "tray" else "exit"
-            self._do_close(choice)
-        finally:
-            self._close_busy = False
-            self._close_intent_time = time.time()
+        act = self.config.get("close_action", "ask")
+        if act == "ask":
+            _gv_log("window closed: ask mode -> show confirm dialog")
+            self._ask_close()
+            return
+        if act == "tray":
+            if self.tray is not None:
+                _gv_log("window closed: keep running in tray")
+                self.shell.hidden = True
+                self._tray_hint()
+                return
+            # 托盘不可用时不让程序静默消失，退回重新打开界面
+            _gv_log("window closed: tray unavailable, reopening UI")
+            self.shell.start()
+            self._notify("系统托盘不可用，界面已重新打开")
+            return
+        _gv_log("window closed: exiting app")
+        self.quit_app()
 
-    def _do_close(self, choice):
-        if choice == "exit":
+    def _ask_close(self):
+        """关闭询问框：退出程序 / 最小化到托盘 / 取消，可选「下次不再询问」。
+
+        由于 ✕ 是系统标题栏，窗口已先行关闭，故点「取消」时重新拉起界面。
+        勾选「下次不再询问」后，本次选择写入 close_action，下次按该行为直接执行、不再弹框；
+        点「取消」则不记住选择。
+        """
+        mb = QMessageBox(None)
+        mb.setIcon(QMessageBox.Question)
+        mb.setWindowTitle("关闭游匣")
+        mb.setText("您想如何关闭游匣？")
+        mb.setInformativeText("退出程序会完全关闭；最小化到托盘后仍在后台运行并记录游玩时长；取消则重新打开界面。")
+        chk = QCheckBox("下次不再询问")
+        mb.setCheckBox(chk)
+        btn_exit = mb.addButton("退出程序", QMessageBox.AcceptRole)
+        btn_tray = mb.addButton("最小化到托盘", QMessageBox.ActionRole)
+        btn_cancel = mb.addButton("取消", QMessageBox.RejectRole)
+        mb.setDefaultButton(btn_tray)
+        mb.exec_()
+        clicked = mb.clickedButton()
+        if clicked == btn_exit:
+            _gv_log("ask close: exit chosen (remember=%s)" % chk.isChecked())
+            if chk.isChecked():
+                self.config["close_action"] = "exit"
+                save_config(self.config)
             self.quit_app()
-        elif choice == "tray":
-            self._tray_hint()
-        else:
+        elif clicked == btn_tray:
+            _gv_log("ask close: tray chosen (remember=%s)" % chk.isChecked())
+            if chk.isChecked():
+                self.config["close_action"] = "tray"
+                save_config(self.config)
+            if self.tray is not None:
+                self.shell.hidden = True
+                self._tray_hint()
+            else:
+                self.shell.start()
+                self._notify("系统托盘不可用，界面已重新打开")
+        else:  # 取消：重新打开界面，不记住选择
+            _gv_log("ask close: cancel chosen -> reopen UI")
             self.shell.start()
 
     def show_ui(self):
@@ -2014,22 +1924,24 @@ class AppCore(QObject):
     def _on_scan_done(self, new, steam_map, t0):
         self._scanning = False
         self._steam_map = steam_map or {}
-        self.all_items = list(new) + self._manual_items()
+        # 扫描结果与库中识别成果的合并规则集中在 Store.merge_items：
+        # 文件系统事实取本次扫描，appid / 中文名 / idChecked 取库里已有记录。
+        # 合并后的列表就是唯一数据源，业务层不再维护第二份互相覆盖的副本。
+        self.all_items = STORE.merge_items(list(new), self._manual_items())
         self._apply_steam_meta()
         self._annotate_playstats()
         self.last_scan = time.time()
         self._notify("扫描完成 · 共 %d 款游戏 · 耗时 %.1fs" %
                      (len(self.all_items), time.time() - t0))
-        self._save_games_cache()
+        STORE.replace_games(self.all_items)
         self._request_covers()
         self._resolve_unknown()
 
     def _warm_from_cache(self):
-        """启动先用本地缓存填充界面，避免大库重新扫描时的白屏等待。"""
+        """启动先用本地库填充界面，避免大库重新扫描时的白屏等待。"""
         try:
-            with open(GAMES_CACHE, encoding="utf-8") as f:
-                rows = json.load(f)
-            if isinstance(rows, list) and rows:
+            rows = STORE.load_games()
+            if rows:
                 self.all_items = rows
                 self._annotate_playstats()
                 self._request_covers()
@@ -2038,21 +1950,9 @@ class AppCore(QObject):
             pass
 
     def _save_games_cache(self):
-        """把当前游戏列表落地到本地缓存，供下次启动秒开。"""
+        """把当前游戏列表整表 UPSERT 到 SQLite，供下次启动秒开。"""
         try:
-            rows = []
-            for it in self.all_items:
-                rows.append({
-                    "folder": it.get("folder"), "cn": it.get("cn"), "en": it.get("en"),
-                    "group": it.get("group"), "appid": it.get("appid"),
-                    "note": it.get("note"), "known": it.get("known"),
-                    "year": it.get("year"), "score": it.get("score"),
-                    "tier": it.get("tier"), "reviews": it.get("reviews"),
-                    "plat": it.get("plat"), "path": it.get("path"),
-                    "manual": it.get("manual"),
-                })
-            with open(GAMES_CACHE, "w", encoding="utf-8") as f:
-                json.dump(rows, f, ensure_ascii=False, indent=1)
+            STORE.replace_games(self.all_items)
         except Exception:
             pass
 
@@ -2091,15 +1991,13 @@ class AppCore(QObject):
 
     def _load_meta_cache(self):
         try:
-            with open(META_CACHE, encoding="utf-8") as f:
-                return json.load(f)
+            return STORE.load_steam_meta()
         except Exception:
             return {}
 
     def _save_meta_cache(self, cache):
         try:
-            with open(META_CACHE, "w", encoding="utf-8") as f:
-                json.dump(cache, f, ensure_ascii=False, indent=1)
+            STORE.save_steam_meta(cache)
         except Exception:
             pass
 
@@ -2144,14 +2042,17 @@ class AppCore(QObject):
         return out
 
     def _fetch_meta_all(self):
-        """为尚未识别的游戏补全 Steam 封面/资料（后台执行）。"""
+        """手动「补全封面与简介」：清除识别标记，强制重试所有未识别游戏。"""
         targets = [it for it in self.all_items if not it.get("appid")]
         if not targets:
             self._notify("所有游戏均已识别，无需补全")
             return
+        for it in targets:
+            it["idChecked"] = False
 
         def worker():
             changed = 0
+            patches = []
             for it in targets:
                 if it.get("appid"):
                     continue
@@ -2159,6 +2060,7 @@ class AppCore(QObject):
                     appid, cn = resolve_steam(it.get("cn") or it.get("folder"))
                 except Exception:
                     appid, cn = None, None
+                it["idChecked"] = True
                 if appid:
                     it["appid"] = appid
                     if cn:
@@ -2166,9 +2068,14 @@ class AppCore(QObject):
                         it["en"] = cn
                     it["note"] = "已在线识别"
                     changed += 1
+                patches.append((it.get("path"), {
+                    "idChecked": True, "appid": it.get("appid"),
+                    "cn": it.get("cn"), "en": it.get("en"), "note": it.get("note"),
+                }))
+            # 只 patch 本次涉及的几行，不整表重写，避免覆盖扫描/游玩统计等并发写入
+            STORE.patch_games(patches)
             if changed:
-                self._request_covers()
-                self._save_games_cache()
+                self.ui_call.emit(self._request_covers)
                 self.ui_call.emit(lambda: self._notify(
                     "已为 %d 款游戏补全封面与资料" % changed))
 
@@ -2190,8 +2097,11 @@ class AppCore(QObject):
 
     def _annotate_playstats(self):
         ps = self.config.get("play_stats", {})
+        ps_norm = {os.path.normcase(os.path.normpath(k)): v
+                   for k, v in ps.items() if isinstance(k, str)}
         for it in self.all_items:
-            st = ps.get(it["path"]) or {}
+            p = it["path"]
+            st = ps.get(p) or ps_norm.get(os.path.normcase(os.path.normpath(p))) or {}
             it["_total_play"] = st.get("total", 0.0)
             it["_last_play"] = st.get("last")
 
@@ -2202,18 +2112,23 @@ class AppCore(QObject):
                 svc.request(str(it["appid"]), it["appid"])
 
     def _resolve_unknown(self):
+        # idChecked：本游戏已经尝试过在线识别（无论成功或失败）。识别失败的通常是
+        # 合集/汉化名/非 Steam 游戏，若不记标记，每次启动都会重新逐个请求 Steam。
         unknown = [it for it in self.all_items
-                   if not it.get("appid") and (not it.get("known") or it.get("manual"))]
+                   if not it.get("appid") and not it.get("idChecked")
+                   and (not it.get("known") or it.get("manual"))]
         if not unknown:
             return
 
         def worker():
             changed = 0
+            patches = []
             for it in unknown:
                 try:
                     appid, cn = resolve_steam(it.get("cn") or it.get("folder"))
                 except Exception:
                     appid, cn = None, None
+                it["idChecked"] = True     # 成功/失败都记，避免下次启动重复联网
                 if appid:
                     it["appid"] = appid
                     if cn:
@@ -2221,6 +2136,13 @@ class AppCore(QObject):
                         it["en"] = cn
                     it["note"] = "已在线识别"
                     changed += 1
+                patches.append((it.get("path"), {
+                    "idChecked": True, "appid": it.get("appid"),
+                    "cn": it.get("cn"), "en": it.get("en"), "note": it.get("note"),
+                }))
+            # 无论是否识别成功都逐行落盘：成功保存 appid，失败保存 idChecked，
+            # 这样下次启动只处理真正新增的游戏；不整表重写，避免覆盖并发写入。
+            STORE.patch_games(patches)
             if changed:
                 self.ui_call.emit(self._request_covers)
                 self.ui_call.emit(lambda: self._notify("已在线识别 %d 款新游戏" % changed))
@@ -2231,6 +2153,9 @@ class AppCore(QObject):
     def _web_payload(self):
         cfg = self.config
         ps = cfg.get("play_stats", {})
+        # 路径大小写/斜杠差异不应让游玩记录「查不到」，建归一化索引兜底
+        ps_norm = {os.path.normcase(os.path.normpath(k)): v
+                   for k, v in ps.items() if isinstance(k, str)}
         favs = set(cfg.get("favorites", []))
         cats = cfg.get("game_categories", {})
         shots = cfg.get("shots", {})
@@ -2242,13 +2167,13 @@ class AppCore(QObject):
             appid = it.get("appid")
             cn = it.get("cn") or it.get("folder") or ""
             grp = it.get("group") or ""
-            st = ps.get(p) or {}
+            st = (ps.get(p) or
+                  ps_norm.get(os.path.normcase(os.path.normpath(p))) or {})
             total = float(st.get("total", 0.0) or 0)
             playing = bool(self._sessions.get(p))
             if playing:
                 total += now - self._sessions[p]      # 实时累加当前会话，托盘后台也不中断
-            # 封面 URL 始终指向 /api/cover：即使没有 AppID，自定义来源也能补全封面；
-            # 后端在全部来源失败时直接返回 SVG 占位图。v 参数用于切换来源后破缓存。
+            # 封面 URL 指向 /api/cover：有 AppID 走 Steam CDN，否则返回 SVG 占位图。
             args = ("appid=%s&name=%s&en=%s&key=%s&group=%s&v=%d" % (
                 appid or "", urllib.parse.quote(cn),
                 urllib.parse.quote(it.get("en") or ""), urllib.parse.quote(p),
@@ -2270,8 +2195,8 @@ class AppCore(QObject):
                 "header": "/api/cover?type=header&" + args,
                 "totalPlay": int(total),
                 "totalPlayText": fmt_duration(total) or "",
-                "lastPlay": fmt_last(st["last"]) if st.get("last") else "",
-                "lastPlayTs": st.get("last") or "",
+                "lastPlay": fmt_last(_last_iso(st.get("last"))) if st.get("last") else "",
+                "lastPlayTs": _last_iso(st.get("last")),
                 "playCount": int(st.get("count", 0) or 0),
                 "playing": playing,
                 "sessionSec": int(now - self._sessions[p]) if playing else 0,
@@ -2297,19 +2222,9 @@ class AppCore(QObject):
             "launchOverrides": c.get("launch_overrides", {}),
             "favorites": c.get("favorites", []),
             "view": c.get("view", "grid"),
-            "closeAction": c.get("close_action", "exit"),
-            "closeAsk": c.get("close_ask", True) is not False,
-            "closeMode": ("tray" if (not c.get("close_ask", True)
-                                     and c.get("close_action") == "tray")
-                         else "exit" if (not c.get("close_ask", True)
-                                         and c.get("close_action") == "exit")
-                         else "ask"),
+            "closeAction": c.get("close_action", "ask"),
+            "closeMode": c.get("close_action", "ask"),
             "geometry": c.get("geometry"),
-            "coverSource": c.get("cover_source", "steam"),
-            "coverLocalDir": c.get("cover_local_dir", ""),
-            "coverUrlTemplate": c.get("cover_url_template", ""),
-            "coverSourceInfo": cover_source_info(c),
-            "coverVersion": self._cover_version,
             "autostart": autostart_enabled(),
             "wallpaper": c.get("wallpaper"),
             "theme": c.get("web_theme", "dark"),
@@ -2326,8 +2241,12 @@ class AppCore(QObject):
         return next((i for i in self.all_items if i.get("path") == path), None)
 
     # ---------- 置顶模态文件选择框 ----------
-    def _pick_file(self, caption, directory, flt, multi=False, only_dir=False):
-        """选择框强制置顶，期间禁用界面窗口，选完才允许继续操作软件。"""
+    def _pick_file(self, caption, directory, flt, multi=False, only_dir=False,
+                   preselect=None):
+        """选择框强制置顶，期间禁用界面窗口，选完才允许继续操作软件。
+
+        preselect：预先选中某个已存在的文件（用于「重新指定启动文件」时高亮当前 exe）。
+        """
         hwnd = self.shell.main_hwnd()
         win_enable(hwnd, False)
         try:
@@ -2337,6 +2256,11 @@ class AppCore(QObject):
             dlg.setFileMode(QFileDialog.Directory if only_dir
                             else QFileDialog.ExistingFiles if multi
                             else QFileDialog.ExistingFile)
+            if preselect and os.path.isfile(preselect) and not only_dir:
+                try:
+                    dlg.selectFile(os.path.normpath(preselect))
+                except Exception:
+                    pass
             try:
                 win_topmost(int(dlg.winId()))
             except Exception:
@@ -2377,9 +2301,20 @@ class AppCore(QObject):
                         self._notify("已收藏《%s》" % it["cn"])
                     save_config(c)
                 elif action == "chooseLaunch":
+                    # 扫描得到的游戏 path 就是游戏文件夹本身；直接把选择框定位到
+                    # 该文件夹内，避免打开到「包含所有游戏」的扫描根目录。
+                    folder = p if os.path.isdir(p) else os.path.dirname(p)
+                    if not os.path.isdir(folder):
+                        folder = ""
+                    # 若此前已指定过启动文件，预选它，便于核对/微调
+                    current = c.get("launch_overrides", {}).get(p)
+                    if not current and not it.get("manual"):
+                        current = find_exe(p)
                     exe = self._pick_file(
-                        "为《%s》选择启动文件" % it["cn"], os.path.dirname(p),
-                        "可执行文件 (*.exe *.bat *.cmd);;所有文件 (*.*)")
+                        "为《%s》选择启动文件（%s）" % (it["cn"], folder or "任意位置"),
+                        folder,
+                        "可执行文件 (*.exe *.bat *.cmd);;所有文件 (*.*)",
+                        preselect=current)
                     if exe:
                         c.setdefault("launch_overrides", {})[p] = os.path.normpath(exe)
                         save_config(c)
@@ -2424,52 +2359,16 @@ class AppCore(QObject):
                 c["view"] = "list" if value == "list" else "grid"
                 save_config(c)
             elif action == "closeAction":
-                c["close_action"] = "tray" if value == "tray" else "exit"
+                v = value if str(value) in ("exit", "tray", "ask") else "ask"
+                c["close_action"] = v
                 save_config(c)
             elif action == "closeMode":
-                v = str(value)
-                if v == "tray":
-                    c["close_ask"] = False
-                    c["close_action"] = "tray"
-                elif v == "exit":
-                    c["close_ask"] = False
-                    c["close_action"] = "exit"
-                else:
-                    c["close_ask"] = True
+                # 三种关闭行为：直接退出 / 最小化到托盘 / 每次询问（三选一）
+                v = value if str(value) in ("exit", "tray", "ask") else "ask"
+                c["close_action"] = v
                 save_config(c)
             elif action == "closeAsk":
-                c["close_ask"] = value in (True, 1, "1", "on", "true", "True")
-                save_config(c)
-            elif action == "coverSource":
-                v = str(value)
-                c["cover_source"] = v if v in ("steam", "local", "url") else "steam"
-                save_config(c)
-                self._cover_version += 1
-                self._notify("封面来源已切换为「%s」" % COVER_SRC_LABELS[c["cover_source"]])
-            elif action == "coverDir":
-                d = str(value).strip()
-                c["cover_local_dir"] = os.path.normpath(d) if d else ""
-                c["cover_source"] = "local"
-                save_config(c)
-                self._cover_version += 1
-            elif action == "coverUrl":
-                c["cover_url_template"] = str(value).strip()[:1000]
-                c["cover_source"] = "url"
-                save_config(c)
-                self._cover_version += 1
-            elif action == "pickCoverDir":
-                d = self._pick_file("选择封面图片文件夹",
-                                    c.get("cover_local_dir") or "", "", only_dir=True)
-                if d:
-                    c["cover_local_dir"] = os.path.normpath(d)
-                    c["cover_source"] = "local"
-                    save_config(c)
-                    self._cover_version += 1
-                    self._notify("封面文件夹已设置：%s" % d)
-            elif action == "refreshCovers":
-                n = self._refresh_cover_cache()
-                self._cover_version += 1
-                self._notify("已清除 %d 个缓存封面，正在按当前来源重新获取" % n)
+                pass   # 兼容旧前端：已合并进 closeMode 的 ask 选项
             elif action == "wallOpacity":
                 w = c.get("wallpaper")
                 if isinstance(w, dict):
@@ -2582,11 +2481,9 @@ class AppCore(QObject):
                 self._fetch_meta_all()
                 self._notify("正在补全封面与简介…")
             elif action == "clearCache":
-                for fp in (GAMES_CACHE, META_CACHE):
-                    try:
-                        os.remove(fp)
-                    except Exception:
-                        pass
+                # 只清封面图片与 Steam 简介缓存；games 表（含已识别 appid /
+                # idChecked）保留，避免清缓存后又触发一轮全量在线识别。
+                STORE.clear_steam_meta()
                 try:
                     if os.path.isdir(COVER_CACHE_DIR):
                         for f in os.listdir(COVER_CACHE_DIR):
@@ -2596,19 +2493,19 @@ class AppCore(QObject):
                                 pass
                 except Exception:
                     pass
-                _CUSTOM_FAIL.clear()
-                self._cover_version += 1
-                self._notify("缓存已清除，下次启动将重新扫描并重新下载封面")
-            elif action == "resetApp":
+                # 版本号落盘，配合 /api/cover 的长缓存头：清缓存后即使重启也能
+                # 让浏览器重新取图，而不是继续用旧的 immutable 缓存。
+                self._cover_version = int(c.get("cover_version", 1) or 1) + 1
+                c["cover_version"] = self._cover_version
+                save_config(c)
                 try:
-                    os.remove(CONFIG_PATH)
+                    cover_service().reset_memory()
                 except Exception:
                     pass
-                for fp in (GAMES_CACHE, META_CACHE):
-                    try:
-                        os.remove(fp)
-                    except Exception:
-                        pass
+                self.ui_call.emit(self._request_covers)
+                self._notify("封面缓存已清除，正在重新下载（游戏识别结果已保留）")
+            elif action == "resetApp":
+                STORE.reset_all()   # 清空用户态表，保留内置评分库与迁移标记
                 for d in (COVER_CACHE_DIR, WALL_DIR, SHOT_DIR, MEDIA_DIR):
                     if os.path.isdir(d):
                         for root, _, files in os.walk(d):
@@ -2622,6 +2519,8 @@ class AppCore(QObject):
                 self._notify("已恢复初始设置，游戏库重新扫描完成")
             elif action == "quit":
                 self.quit_app()
+            elif action == "tray":
+                self._to_tray()
             elif action == "checkUpdate":
                 self.check_for_updates(True)
             elif action == "downloadUpdate":
@@ -2644,8 +2543,25 @@ class AppCore(QObject):
 
     def open_folder(self, it):
         folder = os.path.dirname(it["path"]) if it.get("manual") else it["path"]
-        if os.path.isdir(folder):
-            os.startfile(folder)
+        if not os.path.isdir(folder):
+            return
+        os.startfile(folder)
+        # 新开的资源管理器窗口可能被主窗口挡住：稍后把它置顶并带到前台
+        base = os.path.basename(os.path.normpath(folder)) or folder
+        QTimer.singleShot(400, lambda: self._raise_folder_window(base))
+
+    def _raise_folder_window(self, name):
+        """把标题含 name 的资源管理器窗口置顶到最前（HWND_TOPMOST + 前台）。"""
+        if not name:
+            return
+        try:
+            for hwnd, _area, title, _vis in enum_top_windows(None, include_hidden=False):
+                if title and name.lower() in title.lower():
+                    win_topmost(hwnd)
+                    win_foreground(hwnd)
+                    return
+        except Exception as e:
+            _gv_log("raise folder window failed: %r" % (e,))
 
     def launch(self, it):
         exe = self.get_launch_exe(it)
@@ -3039,6 +2955,8 @@ def main():
         time.sleep(0.2)
     if restart:
         _gv_log("main: resumed after self-update")
+    # 启动新窗口前清理上次异常退出残留的 GameBox 浏览器窗口（孤儿 Edge --app）
+    _cleanup_orphan_browser_windows()
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)

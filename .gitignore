@@ -15,6 +15,9 @@ dist/
 Thumbs.db
 config.json
 *.log
+gamebox.db
+games_cache.json
+meta_cache.json
 
 # 安装包产物
 release/

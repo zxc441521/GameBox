@@ -162,6 +162,13 @@
   .side-item.active { background: var(--bg-hover); color: var(--accent); }
   .side-item .cnt { margin-left: auto; font-size: 11px; color: var(--muted); }
   .side-item.active .cnt { color: var(--accent); }
+  .side-item .cat-del {
+    flex: none; width: 18px; height: 18px; line-height: 18px; text-align: center;
+    border-radius: 3px; font-size: 11px; color: var(--muted);
+    opacity: 0; transition: opacity .12s, color .12s, background .12s;
+  }
+  .side-item:hover .cat-del { opacity: 1; }
+  .side-item .cat-del:hover { color: #ff6b6b; background: rgba(255,107,107,.14); }
   .side-item .dot { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
 
   .content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -242,75 +249,84 @@
   }
   .modal-mask.show { display: flex; }
   .modal {
-    width: 880px; max-width: 94vw; max-height: 90vh; overflow: hidden;
+    width: 940px; max-width: 94vw; max-height: 90vh; overflow: hidden;
     background: var(--bg); border-radius: 10px; border: 1px solid var(--border);
     box-shadow: 0 20px 60px rgba(0,0,0,.5); animation: pop .22s ease;
     display: flex; flex-direction: column;
   }
   @keyframes pop { from { opacity: 0; transform: scale(.96);} to { opacity: 1; transform: none;} }
-  .modal .hero { position: relative; height: 210px; flex-shrink: 0; overflow: hidden; background: var(--bg-deep); }
+  .modal .hero { position: relative; height: 120px; flex-shrink: 0; overflow: hidden; background: var(--bg-deep); }
   .modal .hero img { width: 100%; height: 100%; object-fit: cover; }
   .modal .hero .grad { position: absolute; inset: 0;
-    background: linear-gradient(180deg, transparent 30%, var(--bg) 100%); }
+    background: linear-gradient(180deg, transparent 22%, var(--bg) 100%); }
   .modal .close {
-    position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; z-index: 5;
+    position: absolute; top: 10px; right: 12px; width: 32px; height: 32px; z-index: 5;
     border-radius: 4px; border: none; cursor: pointer; font-size: 16px;
     background: var(--bg-panel); color: var(--text); opacity: .9;
   }
   .modal .close:hover { background: var(--bg-hover); color: var(--accent); }
-  .modal .body { padding: 18px 22px 24px; overflow-y: auto; }
+  .modal .body { padding: 0 20px 18px; overflow-y: auto; }
 
-  /* 上区：封面 + 标题 | 购买框 */
-  .modal .top { display: flex; gap: 22px; align-items: flex-start; }
+  /* 紧凑双栏：左侧内容 / 右侧操作与数据 */
+  .modal .detail-grid {
+    display: grid; grid-template-columns: minmax(0, 1fr) 244px;
+    gap: 18px; align-items: start;
+  }
+  .modal .d-main { min-width: 0; }
+  .modal .d-side { min-width: 0; position: sticky; top: 0; }
+  .modal .top { display: flex; gap: 16px; align-items: flex-start; }
   .modal .cover-sm {
-    width: 160px; flex-shrink: 0; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden;
-    background: var(--cover-fallback); margin-top: -80px; position: relative;
+    width: 112px; flex-shrink: 0; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden;
+    background: var(--cover-fallback); margin-top: -48px; position: relative;
     box-shadow: 0 8px 24px rgba(0,0,0,.45);
   }
   .modal .cover-sm img { width: 100%; height: 100%; object-fit: cover; }
-  .modal .title-col { flex: 1; min-width: 0; padding-top: 2px; }
-  .modal h2 { font-size: 24px; color: var(--text-bright); font-weight: 600; line-height: 1.25; }
-  .modal .en { color: var(--muted); font-size: 13px; margin-top: 4px; }
-  .modal .tags { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
-  .chip { padding: 4px 11px; border-radius: 3px; font-size: 12px; font-weight: 600;
+  .modal .title-col { flex: 1; min-width: 0; padding-top: 12px; }
+  .modal h2 { font-size: 20px; color: var(--text-bright); font-weight: 600; line-height: 1.3; }
+  .modal .en { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .modal .tags { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .chip { padding: 3px 9px; border-radius: 3px; font-size: 11.5px; font-weight: 600;
     background: var(--bg-hover); color: var(--text-bright); }
   .chip.tier { color: #0E1116; }
 
-  /* 购买框（Steam 商店右侧） */
-  .buybox {
-    width: 250px; flex-shrink: 0; border-radius: 6px; overflow: hidden;
-    background: var(--bg-panel); border: 1px solid var(--border);
-  }
-  .buy-inlib { padding: 9px 14px; font-size: 12.5px; color: var(--text-bright);
-    background: var(--bg-hover); border-bottom: 1px solid var(--border-sub); }
-  .buy-inlib::before { content: "✓ "; color: var(--green); font-weight: 700; }
-  .buy-body { padding: 14px; }
-  .btn-play { width: 100%; padding: 12px; font-size: 14px; border-radius: 3px; }
-  .buy-sub { display: flex; gap: 8px; margin-top: 10px; }
-  .buy-sub .btn { flex: 1; padding: 8px 6px; font-size: 12.5px; text-align: center; }
-  .buy-meta { margin-top: 14px; border-top: 1px solid var(--border-sub); padding-top: 12px; }
-  .bm-row { display: flex; justify-content: space-between; align-items: center;
-    font-size: 12.5px; color: var(--muted); padding: 4px 0; }
-  .bm-row b { color: var(--text-bright); font-weight: 600; }
-
-  /* 关于此游戏 */
-  .modal .about { margin-top: 24px; }
-  .modal .about-title { font-size: 15px; font-weight: 600; color: var(--text-bright);
-    padding-bottom: 8px; border-bottom: 1px solid var(--border-sub); margin-bottom: 12px; }
-  .modal .about p { font-size: 13.5px; line-height: 1.7; color: var(--text); }
-  .modal .desc-block { margin-top: 22px; }
-  .modal .m-desc { font-size: 13.5px; line-height: 1.8; color: var(--text);
-    max-height: 200px; overflow-y: auto; }
-  .modal .m-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  /* 左栏分区卡片 */
+  .d-sec { margin-top: 16px; }
+  .d-sec-title { font-size: 13px; font-weight: 600; color: var(--text-bright);
+    padding-bottom: 6px; border-bottom: 1px solid var(--border-sub); margin-bottom: 9px; }
+  .modal .m-desc { font-size: 13px; line-height: 1.7; color: var(--text);
+    max-height: 148px; overflow-y: auto; margin: 0; }
+  .modal .m-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
   .modal .m-meta .tag { font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
     background: var(--bg-card); border: 1px solid var(--border-sub); color: var(--muted); }
+  .modal .m-about { font-size: 12.5px; line-height: 1.65; color: var(--muted); margin: 0 0 8px; }
 
-  .modal .specs {
-    margin-top: 22px; border-top: 1px solid var(--border-sub); padding-top: 16px;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px;
+  .modal .specs { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 18px; }
+  .modal .spec { min-width: 0; }
+  .modal .spec.wide { grid-column: 1 / -1; }
+  .modal .spec .k { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+  .modal .spec .v { color: var(--text-bright); font-size: 12.5px; word-break: break-all; }
+  .modal .spec .v.path-v { font-size: 11.5px; color: var(--muted); }
+
+  /* 右栏操作框 + 数据卡 */
+  .buybox {
+    width: 100%; border-radius: 6px; overflow: hidden;
+    background: var(--bg-panel); border: 1px solid var(--border);
   }
-  .modal .spec .k { color: var(--muted); font-size: 11.5px; margin-bottom: 2px; }
-  .modal .spec .v { color: var(--text-bright); font-size: 13px; }
+  .buy-inlib { padding: 8px 12px; font-size: 12.5px; color: var(--text-bright);
+    background: var(--bg-hover); border-bottom: 1px solid var(--border-sub); }
+  .buy-inlib::before { content: "✓ "; color: var(--green); font-weight: 700; }
+  .buy-body { padding: 12px; }
+  .btn-play { width: 100%; padding: 11px; font-size: 13.5px; border-radius: 3px; }
+  .buy-sub { display: flex; gap: 8px; margin-top: 8px; }
+  .buy-sub .btn { flex: 1; padding: 8px 6px; font-size: 12.5px; text-align: center; }
+  .buy-meta { margin-top: 10px; border-top: 1px solid var(--border-sub); padding-top: 8px; }
+  .bm-row { display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: var(--muted); padding: 3px 0; gap: 8px; }
+  .bm-row b { color: var(--text-bright); font-weight: 600; text-align: right; }
+  .bm-row b.score-v { color: var(--accent); font-size: 15px; }
+  .side-card { margin-top: 12px; padding: 10px 12px; border-radius: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border); }
+  .side-card .d-sec-title { margin-bottom: 6px; }
 
   /* ============ Toast ============ */
   .toast {
@@ -320,6 +336,22 @@
     opacity: 0; pointer-events: none; transition: all .25s ease; box-shadow: var(--shadow-pop);
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ===== 卡片右键菜单 ===== */
+  .card-menu {
+    position: fixed; min-width: 188px; z-index: 350;
+    background: var(--bg-panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px; box-shadow: var(--shadow-pop);
+    display: none; font-size: 13px; overflow: hidden;
+  }
+  .card-menu.show { display: block; }
+  .card-menu-item {
+    padding: 9px 14px; border-radius: 5px; cursor: pointer; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px; user-select: none;
+  }
+  .card-menu-item:hover { background: var(--accent-soft); color: var(--text-bright); }
+  .card-menu-item.danger:hover { background: rgba(232, 80, 80, .16); color: #ff7a7a; }
+  .card-menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
 
   /* 拖动 / 缩放窗口期间暂停动画与毛玻璃，避免掉帧 */
   body.resizing .card, body.resizing .modal, body.resizing .toast,
@@ -337,8 +369,9 @@
     #btnSettings { display: none; }
     .sidebar { position: absolute; left: 0; top: 58px; bottom: 0; z-index: 30;
       box-shadow: var(--shadow-pop); }
+    .modal .detail-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+    .modal .d-side { position: static; }
     .modal .top { flex-wrap: wrap; }
-    .buybox { width: 100%; }
     .modal .specs { grid-template-columns: 1fr; }
   }
 
@@ -390,7 +423,7 @@
     font-weight: 600; animation: livePulse 1.8s ease-in-out infinite; }
   @keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
   .live-tag { color: #5fcf7a; font-weight: 600; }
-  .card .fav-star { position: absolute; right: 7px; top: 7px; z-index: 4;
+  .card .fav-star { position: absolute; left: 7px; top: 7px; z-index: 4;
     font-size: 15px; line-height: 1; color: #F2B632; text-shadow: 0 1px 4px rgba(0,0,0,.8);
     cursor: pointer; opacity: 0; transition: opacity .15s; }
   .card:hover .fav-star, .card .fav-star.on { opacity: 1; }
@@ -420,8 +453,6 @@
   .side-add:hover { color: var(--accent); border-color: var(--accent); }
 
   .modal .path-v { font-size: 11px; word-break: break-all; color: var(--muted); }
-  .modal .manage { margin-top: 22px; border-top: 1px solid var(--border-sub); padding-top: 16px; }
-  .modal .manage-title { font-size: 15px; font-weight: 600; color: var(--text-bright); margin-bottom: 12px; }
   .manage-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .manage-row .btn { padding: 7px 12px; font-size: 12px; }
   .manage-row select { padding: 7px 10px; font-size: 12px; }
@@ -435,36 +466,48 @@
   .buy-inlib:hover { background: var(--bg-card); }
   .buy-inlib.on { color: #F2B632; }
 
-  /* 设置中心 */
-  .settings { position: relative; width: min(860px, 94vw); max-height: 88vh;
-    display: flex; flex-direction: column; background: var(--bg-panel);
-    border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow-pop);
+  /* 设置中心：左侧竖排导航 + 右侧双列卡片 */
+  .settings { position: relative; width: min(1020px, 96vw); max-height: 88vh;
+    display: flex; flex-direction: row; background: var(--bg-panel);
+    border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-pop);
     color: var(--text); overflow: hidden; }
   .settings > .close { position: absolute; top: 12px; right: 14px; width: 32px;
     height: 32px; z-index: 5; border: none; border-radius: 4px; cursor: pointer;
     font-size: 16px; background: var(--bg-card); color: var(--text); opacity: .9; }
   .settings > .close:hover { background: var(--danger); color: #fff; }
-  .set-head { padding: 20px 26px 0; border-bottom: 1px solid var(--border-sub); }
-  .set-head h2 { font-size: 19px; color: var(--text-bright); font-weight: 600; }
-  .set-tabs { display: flex; gap: 4px; margin-top: 16px; }
-  .tab { padding: 9px 20px; font-family: inherit; font-size: 13px; color: var(--muted);
-    background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; }
-  .tab:hover { color: var(--text-bright); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .set-body { padding: 20px 26px 26px; overflow-y: auto; }
+  .set-nav { width: 186px; flex: 0 0 186px; padding: 24px 12px;
+    background: var(--bg-deep); border-right: 1px solid var(--border-sub); }
+  .set-nav-title { font-size: 15px; font-weight: 600; color: var(--text-bright);
+    padding: 0 12px 18px; letter-spacing: .5px; }
+  .nav-item { display: block; width: 100%; text-align: left; padding: 10px 14px;
+    margin-bottom: 4px; font-family: inherit; font-size: 13px; color: var(--muted);
+    background: transparent; border: none; border-radius: 5px; cursor: pointer; }
+  .nav-item:hover { background: var(--bg-card); color: var(--text-bright); }
+  .nav-item.active { background: var(--bg-card); color: var(--accent);
+    font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+  .set-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .set-head { padding: 20px 26px 14px; border-bottom: 1px solid var(--border-sub); }
+  .set-head h2 { font-size: 18px; color: var(--text-bright); font-weight: 600; }
+  .set-sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .set-body { padding: 18px 26px 24px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
   .tab-page { display: none; }
   .tab-page.active { display: block; }
-  .tab-page h3 { font-size: 14px; color: var(--text-bright); margin: 20px 0 8px; font-weight: 600; }
-  .tab-page h3:first-child { margin-top: 0; }
+  .set-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  .set-card { background: var(--bg-card); border: 1px solid var(--border-sub);
+    border-radius: 6px; padding: 15px 16px; }
+  .set-card.span2 { grid-column: 1 / -1; }
+  .set-card h3 { font-size: 13.5px; color: var(--text-bright); margin: 0 0 6px; font-weight: 600; }
+  .set-card .desc { margin-bottom: 10px; }
+  .set-card .btn-row:last-child { margin-bottom: 0; }
+  .set-card .radio-group { margin-bottom: 8px; }
+  @media (max-width: 820px) {
+    .set-grid { grid-template-columns: 1fr; }
+    .set-nav { width: 140px; flex-basis: 140px; }
+  }
   .desc { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 12px; }
   .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
   .btn-row.right { justify-content: flex-end; }
   .btn-row .btn { font-size: 12.5px; padding: 8px 14px; }
-  .cover-in { flex: 1; min-width: 220px; font-family: inherit; font-size: 12.5px;
-    color: var(--text); background: var(--bg-panel);
-    border: 1px solid var(--border-sub); border-radius: 4px; padding: 8px 10px; }
-  .cover-in:focus { outline: none; border-color: var(--accent); }
-  #selCoverSource { font-size: 12.5px; padding: 8px 12px; }
   .root-list { display: flex; flex-direction: column; gap: 6px; }
   .root-row { display: flex; gap: 6px; align-items: center; }
   .root-row input { flex: 1; min-width: 0; font-family: inherit; font-size: 12.5px;
@@ -540,6 +583,10 @@
   .confirm-box h3 { font-size: 16px; color: var(--text-bright); margin-bottom: 12px; }
   .confirm-box p { font-size: 13px; line-height: 1.7; color: var(--text);
     white-space: pre-wrap; word-break: break-all; }
+  .cat-input { width: 100%; margin-top: 14px; padding: 9px 11px; font-family: inherit;
+    font-size: 13px; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border-sub); border-radius: 4px; box-sizing: border-box; }
+  .cat-input:focus { outline: none; border-color: var(--accent); }
   .inline-label { align-self: center; font-size: 12.5px; color: var(--muted); }
   #busyMask { z-index: 500; cursor: progress; background: rgba(9,14,20,.68);
     backdrop-filter: none; }
@@ -586,7 +633,7 @@
       </div>
       <a class="gh-badge" id="brandGithub" href="#" title="访问作者 GitHub">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
-        <span>@zxc4415</span>
+        <span>@zxc441521</span>
       </a>
     </div>
 
@@ -640,14 +687,8 @@
             <div class="side-item" data-filter="fav">
               <span class="dot" style="background:#F2B632"></span><span>收藏</span><span class="cnt" id="cnt-fav"></span>
             </div>
-            <div class="side-item" data-filter="played">
-              <span class="dot" style="background:#75B022"></span><span>玩过的</span><span class="cnt" id="cnt-played"></span>
-            </div>
             <div class="side-item" data-filter="recent">
               <span class="dot" style="background:#66C0F4"></span><span>最近游玩</span><span class="cnt" id="cnt-recent"></span>
-            </div>
-            <div class="side-item" data-filter="manual">
-              <span class="dot" style="background:#9B7BD4"></span><span>手动添加</span><span class="cnt" id="cnt-manual"></span>
             </div>
           </div></div>
         </div>
@@ -698,61 +739,75 @@
         <div class="grad"></div>
       </div>
       <div class="body">
-        <div class="top">
-          <div class="cover-sm"><img id="mCover" src="" alt=""></div>
-          <div class="title-col">
-            <h2 id="mTitle"></h2>
-            <div class="en" id="mEn"></div>
-            <div class="tags">
-              <span class="chip tier" id="mTier"></span>
-              <span class="chip" id="mYear"></span>
-              <span class="chip" id="mGroup"></span>
-              <span class="chip" id="mPlat">PC</span>
+        <div class="detail-grid">
+          <!-- 左栏：标题 + 简介 + 信息 + 管理 -->
+          <div class="d-main">
+            <div class="top">
+              <div class="cover-sm"><img id="mCover" src="" alt=""></div>
+              <div class="title-col">
+                <h2 id="mTitle"></h2>
+                <div class="en" id="mEn"></div>
+                <div class="tags">
+                  <span class="chip tier" id="mTier"></span>
+                  <span class="chip" id="mYear"></span>
+                  <span class="chip" id="mGroup"></span>
+                  <span class="chip" id="mPlat">PC</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="d-sec">
+              <div class="d-sec-title">游戏简介</div>
+              <p id="mAbout" class="m-about"></p>
+              <p id="mDesc" class="m-desc">正在获取简介…</p>
+              <div id="mMeta" class="m-meta"></div>
+            </div>
+
+            <div class="d-sec">
+              <div class="d-sec-title">游戏信息</div>
+              <div class="specs">
+                <div class="spec"><div class="k">媒体评分档</div><div class="v" id="mTier2"></div></div>
+                <div class="spec"><div class="k">发行年份</div><div class="v" id="mYear2"></div></div>
+                <div class="spec"><div class="k">所在分区</div><div class="v" id="mGroup2"></div></div>
+                <div class="spec"><div class="k">Steam App ID</div><div class="v" id="mAppid"></div></div>
+                <div class="spec wide"><div class="k">本地路径</div><div class="v path-v" id="mPath"></div></div>
+              </div>
+            </div>
+
+            <div class="d-sec">
+              <div class="d-sec-title">我的管理</div>
+              <div class="manage-row">
+                <select id="mCat"><option value="">未分类</option></select>
+                <button class="btn" id="mLaunchFile">设置启动文件</button>
+                <button class="btn" id="mAddShots">添加截图</button>
+                <button class="btn" id="mClearShots">清空截图</button>
+              </div>
+              <div class="shots" id="mShots"></div>
             </div>
           </div>
-          <div class="buybox">
-            <button class="buy-inlib" id="mFav" type="button">☆ 加入收藏</button>
-            <div class="buy-body">
-              <button class="btn btn-green btn-play" id="mLaunch">▶ 开始游戏</button>
-              <div class="buy-sub">
-                <button class="btn" id="mFolder">打开文件夹</button>
-                <button class="btn" id="mUninstall">卸载</button>
+
+          <!-- 右栏：操作 + 游玩数据 -->
+          <aside class="d-side">
+            <div class="buybox">
+              <button class="buy-inlib" id="mFav" type="button">☆ 加入收藏</button>
+              <div class="buy-body">
+                <button class="btn btn-green btn-play" id="mLaunch">▶ 开始游戏</button>
+                <div class="buy-sub">
+                  <button class="btn" id="mFolder">打开文件夹</button>
+                  <button class="btn" id="mUninstall">卸载</button>
+                </div>
               </div>
-              <div class="buy-meta">
-                <div class="bm-row"><span>媒体均分</span><b id="mScore"></b></div>
-                <div class="bm-row"><span>发行年份</span><b id="mYear2"></b></div>
+            </div>
+            <div class="side-card">
+              <div class="d-sec-title">媒体与游玩</div>
+              <div class="buy-meta" style="margin-top:0;border-top:none;padding-top:0">
+                <div class="bm-row"><span>媒体均分</span><b class="score-v" id="mScore"></b></div>
                 <div class="bm-row"><span>累计游玩</span><b id="mPlayTime"></b><span id="mPlaying" class="live-tag" style="display:none"></span></div>
                 <div class="bm-row"><span>最近启动</span><b id="mLastPlay"></b></div>
                 <div class="bm-row"><span>启动次数</span><b id="mPlayCount"></b></div>
               </div>
             </div>
-          </div>
-        </div>
-        <div class="about">
-          <div class="about-title">关于此游戏</div>
-          <p id="mAbout"></p>
-        </div>
-        <div class="desc-block">
-          <div class="about-title">游戏简介</div>
-          <p id="mDesc" class="m-desc">正在获取简介…</p>
-          <div id="mMeta" class="m-meta"></div>
-        </div>
-        <div class="specs">
-          <div class="spec"><div class="k">所在分区</div><div class="v" id="mGroup2"></div></div>
-          <div class="spec"><div class="k">Steam App ID</div><div class="v" id="mAppid"></div></div>
-          <div class="spec"><div class="k">媒体评分档</div><div class="v" id="mTier2"></div></div>
-          <div class="spec"><div class="k">发行年份</div><div class="v" id="mYear3"></div></div>
-          <div class="spec"><div class="k">本地路径</div><div class="v path-v" id="mPath"></div></div>
-        </div>
-        <div class="manage">
-          <div class="manage-title">我的管理</div>
-          <div class="manage-row">
-            <select id="mCat"><option value="">未分类</option></select>
-            <button class="btn" id="mLaunchFile">设置启动文件</button>
-            <button class="btn" id="mAddShots">添加截图</button>
-            <button class="btn" id="mClearShots">清空截图</button>
-          </div>
-          <div class="shots" id="mShots"></div>
+          </aside>
         </div>
       </div>
     </div>
@@ -763,164 +818,162 @@
   <footer class="footer" id="footer">
     <span>游匣 GameBox <b id="footVersion"></b></span>
     <span class="sep">·</span>
-    <span>Made with care by <a href="#" id="footAuthor">@zxc4415</a></span>
+    <span>Made with care by <a href="#" id="footAuthor">@zxc441521</a></span>
     <span class="sep">·</span>
     <a href="#" id="footRepo">GitHub 仓库</a>
     <span class="foot-right" id="footStats"></span>
   </footer>
 
-  <!-- 设置中心 -->
+  <!-- 设置中心：左侧竖排导航 + 右侧双列卡片 -->
   <div class="modal-mask" id="setMask">
     <div class="settings">
       <button class="close" id="setClose">✕</button>
-      <div class="set-head">
-        <h2>设置中心</h2>
-        <div class="set-tabs">
-          <button class="tab active" data-tab="library">游戏库</button>
-          <button class="tab" data-tab="appearance">外观</button>
-          <button class="tab" data-tab="general">通用</button>
-          <button class="tab" data-tab="about">关于</button>
+      <aside class="set-nav">
+        <div class="set-nav-title">设置中心</div>
+        <button class="nav-item active" data-tab="library" type="button">游戏库</button>
+        <button class="nav-item" data-tab="appearance" type="button">外观</button>
+        <button class="nav-item" data-tab="general" type="button">通用</button>
+        <button class="nav-item" data-tab="about" type="button">关于</button>
+      </aside>
+      <div class="set-main">
+        <div class="set-head">
+          <h2 id="setTitle">游戏库</h2>
+          <p class="set-sub" id="setSub">扫描目录、导入 Steam 库与手动添加游戏</p>
         </div>
-      </div>
-      <div class="set-body">
+        <div class="set-body">
 
-        <section class="tab-page active" data-page="library">
-          <h3>扫描路径</h3>
-          <p class="desc">每个路径下的一级子文件夹会被识别为一款游戏。修改后点「保存并重新扫描」生效。</p>
-          <div id="rootList" class="root-list"></div>
-          <div class="btn-row">
-            <button class="btn" id="btnPickRoot">+ 添加文件夹</button>
-            <button class="btn btn-green" id="btnSaveRoots">保存并重新扫描</button>
-          </div>
-          <div class="btn-row">
-            <button class="btn" id="btnImportSteam">导入 Steam 库</button>
-            <button class="btn" id="btnPickGame">+ 手动添加游戏</button>
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-green" id="btnFetchMeta">补全封面与简介</button>
-            <span class="inline-label" id="fetchMetaState">为未识别游戏补全封面与 Steam 简介</span>
-          </div>
-
-          <h3>封面图片来源</h3>
-          <p class="desc">默认从 Steam 官方 CDN 按 AppID 取图。也可改用本地图片文件夹或自定义 URL 模板，为没有 AppID 的游戏补全封面。取图失败会自动回退到 Steam，仍失败则显示本地生成的占位图，不会出现破图。</p>
-          <div class="btn-row">
-            <select id="selCoverSource">
-              <option value="steam">Steam 官方 CDN（默认）</option>
-              <option value="local">本地图片文件夹</option>
-              <option value="url">自定义 URL 模板</option>
-            </select>
-            <span class="inline-label" id="coverSourceState"></span>
-          </div>
-          <div class="btn-row" id="coverLocalRow" style="display:none">
-            <input class="cover-in" id="inCoverDir" placeholder="存放封面图片的文件夹，例如 D:\Covers">
-            <button class="btn" id="btnPickCoverDir">选择文件夹</button>
-          </div>
-          <div class="btn-row" id="coverUrlRow" style="display:none">
-            <input class="cover-in" id="inCoverUrl" placeholder="https://example.com/covers/{name}.jpg">
-          </div>
-          <p class="desc" id="coverUrlHint" style="display:none">可用占位符：{name} 中文名、{en} 英文名、{appid}、{folder} 游戏文件夹名、{path} 游戏路径。支持 jpg / png / webp / gif / bmp。</p>
-          <div class="btn-row">
-            <button class="btn btn-green" id="btnApplyCover">应用并刷新封面</button>
-            <button class="btn" id="btnRefreshCovers">仅清除封面缓存</button>
-          </div>
-
-          <h3>手动添加的游戏</h3>
-          <div id="manualList" class="mini-list"></div>
-
-          <h3>启动文件覆盖</h3>
-          <p class="desc">为自动识别不准的游戏指定主程序。</p>
-          <div id="overrideList" class="mini-list"></div>
-        </section>
-
-        <section class="tab-page" data-page="appearance">
-          <h3>主题</h3>
-          <div class="btn-row">
-            <button class="btn" id="btnDark">深色主题</button>
-            <button class="btn" id="btnLight">浅色主题</button>
-          </div>
-          <h3>默认视图</h3>
-          <div class="btn-row">
-            <button class="btn" id="btnGrid">网格视图</button>
-            <button class="btn" id="btnList">列表视图</button>
-          </div>
-          <h3>背景壁纸</h3>
-          <p class="desc">支持 PNG / JPG / WEBP / GIF 静态图片与 MP4 动态壁纸，文件会复制到程序数据目录。</p>
-          <div class="btn-row">
-            <button class="btn" id="btnWallImage">选择图片壁纸</button>
-            <button class="btn" id="btnWallVideo">选择 MP4 动态壁纸</button>
-            <button class="btn" id="btnWallClear">清除壁纸</button>
-          </div>
-          <label class="slider-row">壁纸强度 <input type="range" id="wallOpacity" min="5" max="90" value="32"> <span id="wallOpacityVal">32%</span></label>
-          <div id="wallState" class="wall-state">当前：无壁纸</div>
-        </section>
-
-        <section class="tab-page" data-page="general">
-          <h3>窗口与后台</h3>
-          <p class="desc">点击窗口右上角关闭按钮时的默认行为：</p>
-          <div class="radio-group" id="closeModeGroup">
-            <label class="radio"><input type="radio" name="closeMode" value="ask"> 每次询问（弹出选项后再决定）</label>
-            <label class="radio"><input type="radio" name="closeMode" value="tray"> 最小化到系统托盘（后台继续计时）</label>
-            <label class="radio"><input type="radio" name="closeMode" value="exit"> 直接退出程序</label>
-          </div>
-          <p class="desc">选「每次询问」时，弹窗里勾选「不再提示」即按弹窗所选动作执行；选后两项则每次关闭不再询问。</p>
-          <label class="switch-row">
-            <span>开机自动启动</span>
-            <input type="checkbox" id="chkAutostart">
-          </label>
-          <div class="btn-row">
-            <button class="btn" id="btnRescan">重新扫描游戏库</button>
-          </div>
-          <h3>版本更新</h3>
-          <p class="desc">发现新版本后可一键下载单文件版，下载完成自动替换并重启，无需安装、无需再次确认。</p>
-          <div class="btn-row">
-            <button class="btn" id="btnCheckUpdate">检查更新</button>
-            <button class="btn btn-green" id="btnDownloadUpdate" style="display:none">立即下载并自动更新</button>
-          </div>
-          <div id="updateState" class="wall-state"></div>
-          <div id="updatePanel" class="update-panel" style="display:none">
-            <div class="update-head">
-              <span id="updatePhase">正在下载…</span>
-              <b id="updatePct">0%</b>
+          <section class="tab-page active" data-page="library">
+            <div class="set-grid">
+              <div class="set-card span2">
+                <h3>扫描路径</h3>
+                <p class="desc">每个路径下的一级子文件夹会被识别为一款游戏。修改后点「保存并重新扫描」生效。</p>
+                <div id="rootList" class="root-list"></div>
+                <div class="btn-row">
+                  <button class="btn" id="btnPickRoot">+ 添加文件夹</button>
+                  <button class="btn btn-green" id="btnSaveRoots">保存并重新扫描</button>
+                </div>
+              </div>
+              <div class="set-card span2">
+                <h3>游戏导入</h3>
+                <p class="desc">从已安装的 Steam 库导入，或手动指定一个游戏主程序。</p>
+                <div class="btn-row">
+                  <button class="btn" id="btnImportSteam">导入 Steam 库</button>
+                  <button class="btn" id="btnPickGame">+ 手动添加游戏</button>
+                </div>
+              </div>
             </div>
-            <div class="update-track"><div class="update-fill" id="updateFill"></div></div>
-            <div class="update-meta">
-              <span id="updateBytes">0 MB / 未知大小</span>
-              <span id="updateSpeed">—</span>
-              <span id="updateEta">—</span>
-            </div>
-          </div>
-          <h3>数据管理</h3>
-          <p class="desc">清除缓存只会删除本地游戏列表与封面缓存，保留收藏、分类与游玩记录；恢复初始设置会清空全部配置、缓存与媒体（壁纸/截图）并重新扫描。</p>
-          <div class="btn-row">
-            <button class="btn" id="btnClearCache">清除缓存</button>
-            <button class="btn btn-danger" id="btnResetApp">恢复初始设置</button>
-          </div>
-          <div id="dataState" class="wall-state"></div>
-        </section>
+          </section>
 
-        <section class="tab-page" data-page="about">
-          <div class="about-card">
-            <div class="about-logo">
-              <svg viewBox="0 0 32 32" width="46" height="46" fill="none"><circle cx="16" cy="16" r="15" fill="#1B2838" stroke="#66C0F4" stroke-width="2"/><circle cx="16" cy="16" r="5.5" fill="#66C0F4"/><g stroke="#66C0F4" stroke-width="2.4" stroke-linecap="round"><path d="M16 2.5v6"/><path d="M16 23.5v6"/><path d="M2.5 16h6"/><path d="M23.5 16h6"/></g></svg>
+          <section class="tab-page" data-page="appearance">
+            <div class="set-grid">
+              <div class="set-card">
+                <h3>主题</h3>
+                <div class="btn-row">
+                  <button class="btn" id="btnDark">深色主题</button>
+                  <button class="btn" id="btnLight">浅色主题</button>
+                </div>
+              </div>
+              <div class="set-card">
+                <h3>默认视图</h3>
+                <div class="btn-row">
+                  <button class="btn" id="btnGrid">网格视图</button>
+                  <button class="btn" id="btnList">列表视图</button>
+                </div>
+              </div>
+              <div class="set-card span2">
+                <h3>背景壁纸</h3>
+                <p class="desc">支持 PNG / JPG / WEBP / GIF 静态图片与 MP4 动态壁纸，文件会复制到程序数据目录。</p>
+                <div class="btn-row">
+                  <button class="btn" id="btnWallImage">选择图片壁纸</button>
+                  <button class="btn" id="btnWallVideo">选择 MP4 动态壁纸</button>
+                  <button class="btn" id="btnWallClear">清除壁纸</button>
+                </div>
+                <label class="slider-row">壁纸强度 <input type="range" id="wallOpacity" min="5" max="90" value="32"> <span id="wallOpacityVal">32%</span></label>
+                <div id="wallState" class="wall-state">当前：无壁纸</div>
+              </div>
             </div>
-            <h2>游匣 <span>GameBox</span></h2>
-            <div class="about-ver" id="aboutVer"></div>
-            <div class="about-author">
-              由 <a href="#" id="aboutGithub">@zxc4415</a> 构建 ·
-              <a href="#" id="aboutRepo">GitHub 仓库</a>
-            </div>
-            <p class="about-note">本地运行的游戏库管理器：扫描磁盘目录、Steam 封面与媒体评分、一键启动、游玩时长统计、收藏与自定义分类。免登录、无账号，游戏数据只保存在本机。</p>
-            <div class="about-grid">
-              <div><span>数据目录</span><b id="aboutDataDir"></b></div>
-              <div><span>游戏总数</span><b id="aboutGames"></b></div>
-              <div><span>累计游玩</span><b id="aboutHours"></b></div>
-              <div><span>收藏</span><b id="aboutFavs"></b></div>
-            </div>
-            <div class="about-legal">封面与游戏资料版权归各自权利人所有，仅用于识别与介绍。与 Valve / Steam 及任何游戏发行商均无关联。不提供、不下载、不分发任何游戏本体。MIT 许可证。</div>
-            <div class="about-sign">Made with care by <a href="#" id="aboutSign">@zxc4415</a> · github.com/zxc4415</div>
-          </div>
-        </section>
+          </section>
 
+          <section class="tab-page" data-page="general">
+            <div class="set-grid">
+              <div class="set-card span2">
+                <h3>关闭行为</h3>
+                <p class="desc">点击窗口右上角 ✕ 时的处理方式。</p>
+                <div class="radio-group" id="closeModeGroup">
+                  <label class="radio"><input type="radio" name="closeMode" value="ask"> 每次询问（退出 / 最小化到托盘 / 取消）</label>
+                  <label class="radio"><input type="radio" name="closeMode" value="tray"> 直接最小化到系统托盘（后台继续计时）</label>
+                  <label class="radio"><input type="radio" name="closeMode" value="exit"> 直接退出程序</label>
+                </div>
+              </div>
+              <div class="set-card">
+                <h3>启动与扫描</h3>
+                <label class="switch-row">
+                  <span>开机自动启动</span>
+                  <input type="checkbox" id="chkAutostart">
+                </label>
+                <div class="btn-row">
+                  <button class="btn" id="btnRescan">重新扫描游戏库</button>
+                </div>
+              </div>
+              <div class="set-card">
+                <h3>版本更新</h3>
+                <p class="desc">发现新版本后可一键下载单文件版，下载完成自动替换并重启。</p>
+                <div class="btn-row">
+                  <button class="btn" id="btnCheckUpdate">检查更新</button>
+                  <button class="btn btn-green" id="btnDownloadUpdate" style="display:none">立即下载并自动更新</button>
+                </div>
+                <div id="updateState" class="wall-state"></div>
+                <div id="updatePanel" class="update-panel" style="display:none">
+                  <div class="update-head">
+                    <span id="updatePhase">正在下载…</span>
+                    <b id="updatePct">0%</b>
+                  </div>
+                  <div class="update-track"><div class="update-fill" id="updateFill"></div></div>
+                  <div class="update-meta">
+                    <span id="updateBytes">0 MB / 未知大小</span>
+                    <span id="updateSpeed">—</span>
+                    <span id="updateEta">—</span>
+                  </div>
+                </div>
+              </div>
+              <div class="set-card span2">
+                <h3>数据管理</h3>
+                <p class="desc">清除缓存只会删除本地游戏列表与封面缓存，保留收藏、分类与游玩记录；恢复初始设置会清空全部配置、缓存与媒体（壁纸/截图）并重新扫描。</p>
+                <div class="btn-row">
+                  <button class="btn" id="btnClearCache">清除缓存</button>
+                  <button class="btn btn-danger" id="btnResetApp">恢复初始设置</button>
+                </div>
+                <div id="dataState" class="wall-state"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="tab-page" data-page="about">
+            <div class="set-card">
+              <div class="about-card">
+                <div class="about-logo">
+                  <svg viewBox="0 0 32 32" width="46" height="46" fill="none"><circle cx="16" cy="16" r="15" fill="#1B2838" stroke="#66C0F4" stroke-width="2"/><circle cx="16" cy="16" r="5.5" fill="#66C0F4"/><g stroke="#66C0F4" stroke-width="2.4" stroke-linecap="round"><path d="M16 2.5v6"/><path d="M16 23.5v6"/><path d="M2.5 16h6"/><path d="M23.5 16h6"/></g></svg>
+                </div>
+                <h2>游匣 <span>GameBox</span></h2>
+                <div class="about-ver" id="aboutVer"></div>
+                <div class="about-author">
+                  由 <a href="#" id="aboutGithub">@zxc441521</a> 构建 ·
+                  <a href="#" id="aboutRepo">GitHub 仓库</a>
+                </div>
+                <p class="about-note">本地运行的游戏库管理器：扫描磁盘目录、Steam 封面与媒体评分、一键启动、游玩时长统计、收藏与自定义分类。免登录、无账号，游戏数据只保存在本机。</p>
+                <div class="about-grid">
+                  <div><span>数据目录</span><b id="aboutDataDir"></b></div>
+                  <div><span>游戏总数</span><b id="aboutGames"></b></div>
+                  <div><span>累计游玩</span><b id="aboutHours"></b></div>
+                  <div><span>收藏</span><b id="aboutFavs"></b></div>
+                </div>
+                <div class="about-legal">封面与游戏资料版权归各自权利人所有，仅用于识别与介绍。与 Valve / Steam 及任何游戏发行商均无关联。不提供、不下载、不分发任何游戏本体。MIT 许可证。</div>
+                <div class="about-sign">Made with care by <a href="#" id="aboutSign">@zxc441521</a> · github.com/zxc441521</div>
+              </div>
+            </div>
+          </section>
+
+        </div>
       </div>
     </div>
   </div>
@@ -942,10 +995,35 @@
     </div>
   </div>
 
+  <!-- 新建分类（与删除分类同一套弹窗风格） -->
+  <div class="modal-mask" id="catMask">
+    <div class="confirm-box">
+      <h3 id="catTitle">新建分类</h3>
+      <p id="catText">请输入分类名称，最多 20 个字符</p>
+      <input class="cat-input" id="catName" maxlength="20" placeholder="例如：常玩、已通关、联机">
+      <div class="btn-row right">
+        <button class="btn" id="catCancel">取消</button>
+        <button class="btn btn-green" id="catOk">确定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 截图查看 -->
   <div class="modal-mask" id="shotMask"><img id="shotBig" src="" alt=""></div>
 
   <div class="toast" id="toast"></div>
+
+  <!-- 卡片右键菜单 -->
+  <div class="card-menu" id="cardMenu">
+    <div class="card-menu-item" data-act="launch">▶ 启动游戏</div>
+    <div class="card-menu-item" data-act="folder">📂 打开所在文件夹</div>
+    <div class="card-menu-item" data-act="fav">★ 收藏</div>
+    <div class="card-menu-item" data-act="launchfile">⚙ 设置启动文件</div>
+    <div class="card-menu-item" data-act="shots">🖼 添加截图</div>
+    <div class="card-menu-item" data-act="detail">🔍 打开详情</div>
+    <div class="card-menu-sep"></div>
+    <div class="card-menu-item danger" data-act="uninstall">🗑 卸载游戏</div>
+  </div>
 
   <script>window.GAMES = window.GAMES || [];</script>
   <script>
@@ -968,10 +1046,59 @@
     let currentGame = null;
     let confirmCb = null;
 
-    /* ===== 禁用应用内右键菜单与右键交互 ===== */
-    document.addEventListener("contextmenu", e => e.preventDefault());
+    /* ===== 禁用应用内原生右键菜单；卡片上改为弹出自定义菜单 ===== */
+    document.addEventListener("contextmenu", e => {
+      e.preventDefault();
+      if (!e.target.closest(".card")) closeCardMenu();
+    });
     document.addEventListener("dragstart", e => {
       if (e.target && e.target.tagName === "IMG") e.preventDefault();
+    });
+
+    /* ===== 卡片右键菜单 ===== */
+    let menuGame = null;
+    function openCardMenu(g, e) {
+      menuGame = g;
+      const m = $("cardMenu");
+      if (!m) return;
+      m.querySelector('[data-act="fav"]').textContent = g.favorite ? "★ 取消收藏" : "★ 收藏";
+      m.querySelector('[data-act="uninstall"]').textContent = g.manual ? "🗑 从库中移除" : "🗑 卸载游戏";
+      m.classList.add("show");
+      const r = m.getBoundingClientRect();
+      let x = e.clientX, y = e.clientY;
+      if (x + r.width > window.innerWidth)  x = window.innerWidth  - r.width  - 8;
+      if (y + r.height > window.innerHeight) y = window.innerHeight - r.height - 8;
+      m.style.left = Math.max(8, x) + "px";
+      m.style.top  = Math.max(8, y) + "px";
+    }
+    function closeCardMenu() {
+      const m = $("cardMenu");
+      if (m) m.classList.remove("show");
+    }
+    document.addEventListener("click", e => {
+      const m = $("cardMenu");
+      if (m && m.classList.contains("show") && !m.contains(e.target)) closeCardMenu();
+    });
+    window.addEventListener("scroll", closeCardMenu, true);
+    $("cardMenu").addEventListener("click", e => {
+      const item = e.target.closest("[data-act]");
+      if (!item || !menuGame) return;
+      const g = menuGame, act = item.dataset.act;
+      closeCardMenu();
+      if (act === "launch") launch(g);
+      else if (act === "folder") gv("openFolder", g.path);
+      else if (act === "fav") { gv("favorite", g.path); g.favorite = !g.favorite; render(); }
+      else if (act === "launchfile") gv("chooseLaunch", g.path, true);
+      else if (act === "shots") gv("pickShots", g.path, true);
+      else if (act === "detail") openDetail(g);
+      else if (act === "uninstall") {
+        ask(g.manual ? "从游戏库移除" : "确认卸载",
+          g.manual
+            ? "确定把《" + g.cn + "》从游戏库中移除吗？\n不会删除硬盘上的任何文件。"
+            : "即将把《" + g.cn + "》移入 Windows 回收站。\n\n目录：" + g.path +
+              "\n\n文件可在回收站还原，程序不会直接删除。",
+          () => { gv("uninstall", g.path); toast("正在处理…"); refreshGames(); });
+      }
     });
 
     /* ===== 本地后端桥接 ===== */
@@ -1100,9 +1227,7 @@
     function buildSidebar() {
       $("cnt-all").textContent = GAMES.length;
       $("cnt-fav").textContent = GAMES.filter(g => g.favorite).length;
-      $("cnt-played").textContent = GAMES.filter(g => g.totalPlay > 0).length;
-      $("cnt-recent").textContent = GAMES.filter(g => !!g.lastPlayTs).length;
-      $("cnt-manual").textContent = GAMES.filter(g => g.manual).length;
+      $("cnt-recent").textContent = GAMES.filter(g => !!(g.lastPlayTs || g.lastPlay)).length;
 
       const gEl = $("groupList"); gEl.innerHTML = "";
       [...new Set(GAMES.map(g => g.group).filter(Boolean))].forEach(grp => {
@@ -1119,8 +1244,24 @@
         const d = document.createElement("div");
         d.className = "side-item"; d.dataset.filter = "cat:" + cat;
         d.innerHTML = '<span class="dot" style="background:#9B7BD4"></span><span>' +
-                      esc(cat) + '</span><span class="cnt">' + n + '</span>';
+                      esc(cat) + '</span><span class="cnt">' + n + '</span>' +
+                      '<span class="cat-del" title="删除分类" data-del-cat="' + esc(cat) + '">✕</span>';
         cEl.appendChild(d);
+      });
+      cEl.querySelectorAll("[data-del-cat]").forEach(x => {
+        x.onclick = e => {
+          e.stopPropagation();
+          const name = x.dataset.delCat;
+          ask("删除分类", "确定删除分类「" + name + "」吗？\n已归入该分类的游戏会变为未分类。", () => {
+            gv("delCategory", name).then(() => {
+              SET.categories = (SET.categories || []).filter(c => c !== name);
+              if (state.filter === "cat:" + name) state.filter = "all";
+              buildSidebar();
+              if ($("setMask").classList.contains("show")) renderSettings();
+              render(); toast("已删除分类");
+            });
+          });
+        };
       });
       const tEl = $("tierList"); tEl.innerHTML = "";
       ["普遍赞誉", "优秀", "好评", "良好", "中规中矩", "褒贬不一", "评价偏低", "暂无收录"]
@@ -1153,9 +1294,7 @@
       const f = state.filter;
       let list = GAMES.filter(g => {
         if (f === "fav" && !g.favorite) return false;
-        if (f === "played" && !(g.totalPlay > 0)) return false;
-        if (f === "recent" && !g.lastPlayTs) return false;
-        if (f === "manual" && !g.manual) return false;
+        if (f === "recent" && !(g.lastPlayTs || g.lastPlay)) return false;
         if (f.startsWith("group:") && g.group !== f.slice(6)) return false;
         if (f.startsWith("tier:") && g.tier !== f.slice(5)) return false;
         if (f.startsWith("cat:") && g.category !== f.slice(4)) return false;
@@ -1167,7 +1306,8 @@
         if (state.sort === "name") return a.cn.localeCompare(b.cn, "zh");
         if (state.sort === "year") return (b.year || 0) - (a.year || 0);
         if (state.sort === "scoreAsc") return (a.score ?? -1) - (b.score ?? -1);
-        if (state.sort === "recent") return (b.lastPlayTs || "").localeCompare(a.lastPlayTs || "");
+        if (state.sort === "recent") return (b.lastPlayTs || b.lastPlay || "")
+          .localeCompare(a.lastPlayTs || a.lastPlay || "");
         if (state.sort === "playtime") return b.totalPlay - a.totalPlay;
         return (b.score ?? -1) - (a.score ?? -1);
       });
@@ -1256,6 +1396,10 @@
         if (e.target.closest("[data-fav]")) { gv("favorite", g.path); g.favorite = !g.favorite; render(); return; }
         openDetail(g);
       });
+      el.addEventListener("contextmenu", e => {
+        e.preventDefault();
+        openCardMenu(g, e);
+      });
       return el;
     }
 
@@ -1283,7 +1427,6 @@
       $("mTitle").textContent = g.cn; $("mEn").textContent = g.en || "";
       $("mYear").textContent = (g.year || "—") + " 年";
       $("mYear2").textContent = g.year || "—";
-      $("mYear3").textContent = g.year || "—";
       $("mGroup").textContent = g.group || "—";
       $("mGroup2").textContent = g.group || "—";
       $("mAppid").textContent = g.appid || "—";
@@ -1336,25 +1479,48 @@
     function launch(g) { gv("launch", g.path); toast("正在启动《" + g.cn + "》"); }
 
     /* ===== 设置中心 ===== */
-    function setInputIfIdle(id, value) {
-      const el = $(id);
-      if (el && document.activeElement !== el) el.value = value || "";
-    }
-    function renderCoverSource() {
-      const src = SET.coverSource || "steam";
-      const sel = $("selCoverSource");
-      if (document.activeElement !== sel) sel.value = src;
-      // 设置面板会被定时同步重绘；正在输入的框不覆盖，避免打断用户编辑
-      setInputIfIdle("inCoverDir", SET.coverLocalDir);
-      setInputIfIdle("inCoverUrl", SET.coverUrlTemplate);
-      $("coverLocalRow").style.display = src === "local" ? "flex" : "none";
-      $("coverUrlRow").style.display = src === "url" ? "flex" : "none";
-      $("coverUrlHint").style.display = src === "url" ? "block" : "none";
-      $("coverSourceState").textContent = SET.coverSourceInfo || "";
+    const TAB_INFO = {
+      library:    ["游戏库", "扫描目录、导入 Steam 库与手动添加游戏"],
+      appearance: ["外观",   "主题、默认视图与背景壁纸"],
+      general:    ["通用",   "关闭行为、启动、版本更新与数据管理"],
+      about:      ["关于",   "版本信息与数据统计"]
+    };
+    function applyTabTitle(key) {
+      const info = TAB_INFO[key] || TAB_INFO.library;
+      $("setTitle").textContent = info[0];
+      $("setSub").textContent = info[1];
     }
     function openSettings() {
       renderSettings();
       $("setMask").classList.add("show");
+      const act = document.querySelector(".nav-item.active");
+      applyTabTitle(act ? act.dataset.tab : "library");
+      equalizeSettings();
+    }
+    /* 以「通用」页为基准统一 4 个分项大小：通用页内容完整显示（无滚动条），
+       其余分项留白到同样高度；窗口高度封顶 88vh，超出时内容区内部滚动。 */
+    function equalizeSettings() {
+      const general = document.querySelector('.tab-page[data-page="general"]');
+      if (!general) return;
+      const pages = document.querySelectorAll(".tab-page");
+      // 临时让 general 参与布局以测得完整内容高度（同步测量，无闪烁）
+      const wasActive = general.classList.contains("active");
+      const prevDisplay = general.style.display;
+      general.classList.add("active");
+      general.style.display = "";
+      const gh = general.offsetHeight;
+      if (!wasActive) general.classList.remove("active");
+      general.style.display = prevDisplay;
+      if (!gh) return;
+      pages.forEach(p => { p.style.minHeight = gh + "px"; });
+      const head = document.querySelector(".set-head");
+      const body = document.querySelector(".set-body");
+      const cs = getComputedStyle(body);
+      const bodyH = gh + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      const target = (head ? head.offsetHeight : 0) + bodyH;
+      const max = Math.round(window.innerHeight * 0.88);
+      document.querySelector(".settings").style.height =
+        Math.min(target, max) + "px";
     }
     function renderSettings() {
       const roots = SET.roots || [];
@@ -1373,27 +1539,9 @@
         gv("setRoots", arr);
         SET.roots = arr; renderSettings(); toast("扫描路径已更新");
       });
-      $("manualList").innerHTML = (SET.manualGames || []).length ?
-        (SET.manualGames || []).map(g =>
-          '<div class="mini-row"><span>' + esc(g.cn || g.path) + '</span><em>' + esc(g.path) +
-          '</em><a data-rm="' + esc(g.path) + '">移除</a></div>').join("")
-        : '<div class="empty-mini">暂无手动添加的游戏。</div>';
-      $("manualList").querySelectorAll("a[data-rm]").forEach(a => a.onclick = () => {
-        gv("removeManual", a.dataset.rm); toast("已移除");
-      });
-      const ovs = SET.launchOverrides || {};
-      const keys = Object.keys(ovs);
-      $("overrideList").innerHTML = keys.length ? keys.map(k =>
-        '<div class="mini-row"><span>' + esc(k.split("\\").pop() || k) + '</span><em>' +
-        esc(ovs[k]) + '</em><a data-clr="' + esc(k) + '">清除</a></div>').join("")
-        : '<div class="empty-mini">全部使用自动检测。</div>';
-      $("overrideList").querySelectorAll("a[data-clr]").forEach(a => a.onclick = () => {
-        gv("clearLaunch", a.dataset.clr); delete ovs[a.dataset.clr]; renderSettings();
-      });
-      const cm = SET.closeMode || "ask";
+      const cm = (SET.closeMode === "exit" || SET.closeMode === "tray" || SET.closeMode === "ask") ? SET.closeMode : "ask";
       document.querySelectorAll('input[name="closeMode"]').forEach(r => r.checked = (r.value === cm));
       $("chkAutostart").checked = !!SET.autostart;
-      renderCoverSource();
       $("btnView").textContent = state.view === "grid" ? "▦" : "☰";
       const up = SET.update || {};
       $("btnDownloadUpdate").style.display = up.ver ? "inline-block" : "none";
@@ -1417,22 +1565,19 @@
       return [...$("rootList").querySelectorAll(".root-in")]
         .map(x => x.value.trim()).filter(Boolean);
     }
-    document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
-      document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    document.querySelectorAll(".nav-item").forEach(t => t.onclick = () => {
+      document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("active", x === t));
       document.querySelectorAll(".tab-page").forEach(p =>
         p.classList.toggle("active", p.dataset.page === t.dataset.tab));
+      applyTabTitle(t.dataset.tab);
     });
-    /* ===== 窗口关闭：先通知后端弹出原生选项，界面在询问期间保持可见 =====
-       v2.4.0 实现（回滚）：preventDefault 阻止窗口立刻消失，后端收到 beacon 后
-       立即弹 Qt 三选一询问框，并抑制 Chromium 自带的「是否离开应用?」确认框。 */
-    window.addEventListener("beforeunload", function (e) {
+    /* ===== 窗口关闭：使用系统原生标题栏 =====
+       点 ✕ 由宿主按设置里的关闭行为执行（每次询问 / 最小化到托盘 / 直接退出）。
+       这里只在页面卸载前把窗口尺寸落盘。 */
+    window.addEventListener("beforeunload", function () {
       try {
-        navigator.sendBeacon("/api/window-close", "close");
         navigator.sendBeacon("/api/geometry", JSON.stringify({geometry: geometryPayload()}));
       } catch (err) {}
-      e.preventDefault();
-      e.returnValue = "";
-      return "";
     });
 
     $("btnSettings").onclick = openSettings;
@@ -1440,40 +1585,10 @@
     $("setMask").addEventListener("click", e => {
       if (e.target === $("setMask")) $("setMask").classList.remove("show");
     });
-    $("btnSaveRoots").onclick = () => { gv("setRoots", collectRoots()); toast("已保存，正在重新扫描…"); };
-    $("btnPickRoot").onclick = () => { gv("setRoots", collectRoots()); gv("pickRoot", "", true); };
-    $("btnPickGame").onclick = () => gv("pickGame", "", true);
-    $("btnImportSteam").onclick = () => { gv("importSteam"); toast("正在检测 Steam 库…"); };
-    $("btnFetchMeta").onclick = () => {
-      gv("fetchMeta", "", true);
-      $("fetchMetaState").textContent = "正在补全封面与简介…";
-      setTimeout(() => { $("fetchMetaState").textContent = "已完成，刷新后可见新封面/简介"; }, 4000);
-    };
-    $("selCoverSource").onchange = e => {
-      SET.coverSource = e.target.value;
-      renderCoverSource();
-    };
-    $("btnPickCoverDir").onclick = () => {
-      gv("pickCoverDir", "", true).then(() => {
-        SET.coverSource = "local";
-        setTimeout(() => { syncSettings(); renderCoverSource(); }, 300);
-      });
-    };
-    $("btnApplyCover").onclick = () => {
-      const src = $("selCoverSource").value;
-      let p;
-      if (src === "local") p = gv("coverDir", $("inCoverDir").value.trim());
-      else if (src === "url") p = gv("coverUrl", $("inCoverUrl").value.trim());
-      else p = gv("coverSource", "steam");
-      p.then(() => gv("refreshCovers")).then(() => {
-        toast("封面来源已应用，正在重新获取封面");
-        setTimeout(syncSettings, 600);
-      });
-    };
-    $("btnRefreshCovers").onclick = () => {
-      gv("refreshCovers"); toast("封面缓存已清除，正在按当前来源重新获取");
-      setTimeout(syncSettings, 600);
-    };
+    $("btnSaveRoots").onclick = () => { gv("setRoots", collectRoots()); toast("已保存，正在重新扫描…"); refreshGames(); };
+    $("btnPickRoot").onclick = () => { gv("setRoots", collectRoots()); gv("pickRoot", "", true); refreshGames(); };
+    $("btnPickGame").onclick = () => { gv("pickGame", "", true); refreshGames(); };
+    $("btnImportSteam").onclick = () => { gv("importSteam"); toast("正在检测 Steam 库…"); refreshGames(); };
     $("btnDark").onclick = () => { applyTheme("dark"); gv("theme", "dark"); };
     $("btnLight").onclick = () => { applyTheme("light"); gv("theme", "light"); };
     $("btnGrid").onclick = () => { state.view = "grid"; gv("view", "grid"); render(); };
@@ -1490,7 +1605,7 @@
       if (r.checked) gv("closeMode", r.value);
     });
     $("chkAutostart").onchange = e => gv("autostart", e.target.checked ? "on" : "off");
-    $("btnRescan").onclick = () => { gv("rescan"); toast("正在重新扫描…"); };
+    $("btnRescan").onclick = () => { gv("rescan"); toast("正在重新扫描…"); refreshGames(); };
     $("btnCheckUpdate").onclick = () => { gv("checkUpdate"); toast("正在检查更新…"); };
     $("btnDownloadUpdate").onclick = () => {
       gv("downloadUpdate");
@@ -1504,22 +1619,44 @@
       });
     $("btnResetApp").onclick = () => ask("恢复初始设置",
       "将清空全部配置、缓存与媒体（壁纸 / 截图），并重新扫描游戏库。\n此操作不可撤销，确定继续？", () => {
-        gv("resetApp"); $("dataState").textContent = "已恢复初始设置，正在重新扫描"; toast("已恢复初始设置");
+        gv("resetApp"); $("dataState").textContent = "已恢复初始设置，正在重新扫描"; toast("已恢复初始设置"); refreshGames();
       });
-    $("btnNewCat").onclick = () => {
-      const name = prompt("新分类名称");
-      if (name && name.trim()) { gv("newCategory", name.trim()); toast("已创建分类"); }
-    };
+    // 新建分类：与删除分类统一风格，使用自定义输入框而非原生 prompt
+    $("btnNewCat").onclick = openNewCat;
+    function openNewCat() {
+      const inp = $("catName");
+      inp.value = "";
+      $("catMask").classList.add("show");
+      setTimeout(() => { try { inp.focus(); } catch (e) {} }, 30);
+    }
+    function submitNewCat() {
+      const v = $("catName").value.trim();
+      $("catMask").classList.remove("show");
+      if (!v) return;
+      gv("newCategory", v).then(() => {
+        const list = SET.categories || (SET.categories = []);
+        if (!list.includes(v)) list.push(v);
+        buildSidebar();
+        if ($("setMask").classList.contains("show")) renderSettings();
+        toast("已创建分类");
+      });
+    }
+    $("catCancel").onclick = () => $("catMask").classList.remove("show");
+    $("catOk").onclick = submitNewCat;
+    $("catName").addEventListener("keydown", e => { if (e.key === "Enter") submitNewCat(); });
+    $("catMask").addEventListener("click", e => {
+      if (e.target === $("catMask")) $("catMask").classList.remove("show");
+    });
 
     /* ===== 签名链接（统一走后端用系统默认浏览器打开） ===== */
     [["brandGithub", "authorUrl"], ["footAuthor", "authorUrl"],
      ["aboutGithub", "authorUrl"], ["aboutSign", "authorUrl"]].forEach(([id, key]) => {
       const el = $(id);
-      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET[key] || "https://github.com/zxc4415"); };
+      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET[key] || "https://github.com/zxc441521"); };
     });
     [["footRepo", "repoUrl"], ["aboutRepo", "repoUrl"]].forEach(([id, key]) => {
       const el = $(id);
-      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET[key] || "https://github.com/zxc4415/GameVault"); };
+      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET[key] || "https://github.com/zxc441521/GameBox"); };
     });
 
     /* ===== 详情弹窗事件 ===== */
@@ -1534,7 +1671,7 @@
         g.manual ? "确定把《" + g.cn + "》从游戏库中移除吗？\n不会删除硬盘上的任何文件。"
                  : "即将把《" + g.cn + "》移入 Windows 回收站。\n\n目录：" + g.path +
                    "\n\n文件可在回收站还原，程序不会直接删除。",
-        () => { gv("uninstall", g.path); closeDetail(); toast("正在处理…"); });
+        () => { gv("uninstall", g.path); closeDetail(); toast("正在处理…"); refreshGames(); });
     };
     $("mFav").onclick = () => {
       if (!currentGame) return;
@@ -1543,7 +1680,7 @@
       setFavBtn(currentGame);
     };
     $("mCat").onchange = e => {
-      if (currentGame) gv("setCategory", {path: currentGame.path, name: e.target.value});
+      if (currentGame) { gv("setCategory", {path: currentGame.path, name: e.target.value}); refreshGames(); }
     };
     $("mLaunchFile").onclick = () => { if (currentGame) gv("chooseLaunch", currentGame.path, true); };
     $("mAddShots").onclick = () => { if (currentGame) gv("pickShots", currentGame.path, true); };
@@ -1561,7 +1698,7 @@
     /* ===== 顶栏与快捷键 ===== */
     $("search").addEventListener("input", e => { state.q = e.target.value; render(); });
     $("sort").addEventListener("change", e => { state.sort = e.target.value; render(); });
-    $("btnScan").onclick = () => { gv("rescan"); toast("正在扫描…"); };
+    $("btnScan").onclick = () => { gv("rescan"); toast("正在扫描…"); refreshGames(); };
     $("btnView").onclick = () => {
       state.view = state.view === "grid" ? "list" : "grid";
       gv("view", state.view);
@@ -1573,6 +1710,7 @@
         $("shotMask").classList.remove("show");
         $("confirmMask").classList.remove("show");
         $("setMask").classList.remove("show");
+        closeCardMenu();
         closeDetail();
       }
       // 页面刷新会触发 beforeunload，误判为关闭窗口；这里统一改为重新扫描
@@ -1600,7 +1738,7 @@
               const fresh = GAMES.find(g => g.path === currentGame.path);
               if (fresh && $("mask").classList.contains("show")) {
                 currentGame = fresh;
-                refreshPlaying(fresh);   // 详情打开时持续刷新「正在游玩」时长
+                refreshPlaying(fresh);   // 详情打开时按需刷新「正在游玩」时长（不再后台轮询）
               }
             }
             buildSidebar(); scheduleRender();
@@ -1608,6 +1746,8 @@
         }
       }).catch(() => {});
     }
+    /* 仅在一次用户操作改变游戏数据后按需刷新（refreshGames），不再后台定时轮询，避免主页一直刷新 */
+    function refreshGames() { syncGames(); setTimeout(syncGames, 1200); }
     /* ===== 版本更新进度：百分比 / 速度 / 已下载 / 剩余时间 ===== */
     function fmtSize(n) {
       n = Number(n) || 0;
@@ -1694,21 +1834,24 @@
             if (SET.theme) applyTheme(SET.theme);
             if ($("setMask").classList.contains("show")) renderSettings();
             else applyWallpaper(SET.wallpaper);
+            buildSidebar();   // 设置变化即时重绘侧栏，分类无需重启
           } catch (e) {}
         }
       }).catch(() => {});
     }
     function syncNotices() {
       fetch("/api/notify").then(r => r.json()).then(d => {
-        (d.messages || []).forEach(toast);
+        const msgs = d.messages || [];
+        msgs.forEach(toast);
+        // 扫描完成/在线识别/补全封面后，游戏列表（评分/封面/appid）已更新，拉取一次
+        if (msgs.some(m => /扫描完成|识别|补全|封面/.test(m))) syncGames();
       }).catch(() => {});
     }
     fetch("/api/theme").then(r => r.json()).then(d => {
       if (d && d.theme) applyTheme(d.theme);
     }).catch(() => {});
-    syncGames(); syncSettings(); pollUpdate();
+    syncGames(); syncSettings(); pollUpdate();   // 启动时各同步一次
     setUpdatePolling(false);
-    setInterval(syncGames, 2500);
     setInterval(syncSettings, 3000);
     setInterval(syncNotices, 1200);
     setInterval(reportGeometry, 8000);   // 兜底：周期性上报窗口位置，防止遗漏
