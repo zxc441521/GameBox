@@ -47,6 +47,7 @@ _WND_ENUM_PROC = (ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPAR
                   if _user32 else None)
 SINGLE_MUTEX_NAME = os.environ.get("GV_TEST_MUTEX", "GameBox_SingleInstance_Mutex")
 BRIDGE_PORT_FILE = os.environ.get("GV_TEST_PORT_FILE", os.path.join(tempfile.gettempdir(), "GameBox_Bridge.port"))
+SHELL_PID_FILE = os.environ.get("GV_TEST_SHELL_PID", os.path.join(tempfile.gettempdir(), "GameBox_Shell.pid"))
 BROWSER_TITLE_KEYS = ("游匣", "GameBox")
 _MUTEX_HANDLE = None
 _HWND_TOPMOST = (ctypes.c_void_p(-1) if _user32 else None)
@@ -115,18 +116,18 @@ def enum_top_windows(pid=None, include_hidden=False):
 
 
 def browser_main_hwnd(pid=None):
-    """定位界面窗口；pid 未知时按标题全局查找。"""
-    if not _user32:
+    """定位本程序拉起的浏览器窗口；pid 未知时返回 None。
+
+    不做全局标题匹配：用户自己的 Edge/Chrome 里也可能开着标题含「游匣」的页面，
+    按标题抓窗口会误认、误操作别人的浏览器。
+    """
+    if not _user32 or not pid:
         return None
     wins = enum_top_windows(pid, include_hidden=True)
     titled = [w for w in wins if any(k in w[2] for k in BROWSER_TITLE_KEYS)]
     if titled:
         return max(titled, key=lambda w: w[1])[0]
-    if pid is not None and wins:
-        return max(wins, key=lambda w: w[1])[0]
-    titled = [w for w in enum_top_windows(None, include_hidden=True)
-              if any(k in w[2] for k in BROWSER_TITLE_KEYS)]
-    return max(titled, key=lambda w: w[1])[0] if titled else None
+    return max(wins, key=lambda w: w[1])[0] if wins else None
 
 
 def win_enable(hwnd, on):
@@ -162,77 +163,139 @@ def win_topmost(hwnd):
             pass
 
 
-def _cleanup_orphan_browser_windows():
-    """启动时清理上次异常退出残留的 GameBox 浏览器窗口（Edge --app）。
+# ---------------- 浏览器外壳生命周期（Job Object，随宿主退出自动回收） ----------------
+# 旧做法：启动时按窗口标题全局扫描「游匣」并强杀窗口所在进程。只要用户自己的
+# Edge/Chrome 恰好开着含该标题的页面（GitHub 仓库页、搜索页等），整只浏览器
+# 会被连坐杀掉。现在改为把 --app 子进程挂进 Job Object：宿主无论正常退出还是被
+# 任务管理器强杀，Job 句柄关闭时系统都会一并结束这个浏览器进程，既不留下孤儿，
+# 也绝不会碰到用户自己的浏览器窗口。
+_JOB_HANDLE = None
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 
-    宿主进程被任务管理器/崩溃强杀时，它拉起的 Edge --app 子进程会变孤儿继续驻留，
-    窗口标题仍为「游匣 · GameBox」。这些残留占用资源、干扰新实例（用户会看到旧
-    窗口、或与无边框状态混淆）。本函数在启动新窗口前调用：先 WM_CLOSE 优雅关闭，
-    再对仍存活的窗口进程强杀兜底。
 
-    只匹配标题含「游匣」的窗口（GameBox 专属标题），不会波及用户正常使用的
-    Edge/Chrome 标签页或文件管理器窗口。
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong)]
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD)]
+
+
+class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+def attach_browser_to_job(proc):
+    """把浏览器子进程挂进 Job Object（KILL_ON_JOB_CLOSE）。
+
+    只作用于本进程 Popen 出来的那一个浏览器进程及其子进程，完全不枚举系统窗口，
+    因此不会影响用户正在使用的浏览器。
     """
-    if not _user32:
+    global _JOB_HANDLE
+    if os.name != "nt" or proc is None:
         return
-    hwnds = []
     try:
-        @_WND_ENUM_PROC
-        def _cb(hwnd, lp):
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        k.CreateJobObjectW.restype = wintypes.HANDLE
+        k.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                              ctypes.c_void_p, wintypes.DWORD]
+        k.SetInformationJobObject.restype = wintypes.BOOL
+        k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k.AssignProcessToJobObject.restype = wintypes.BOOL
+        if _JOB_HANDLE is None:
+            h = k.CreateJobObjectW(None, None)
+            if not h:
+                _gv_log("job: create failed err=%s" % ctypes.get_last_error())
+                return
+            info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not k.SetInformationJobObject(
+                    h, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                    ctypes.byref(info), ctypes.sizeof(info)):
+                _gv_log("job: set limit failed err=%s" % ctypes.get_last_error())
+            _JOB_HANDLE = h                      # 句柄持有到进程结束
+        handle = int(getattr(proc, "_handle", 0) or 0)
+        if not handle:
+            return
+        ok = k.AssignProcessToJobObject(_JOB_HANDLE, handle)
+        _gv_log("job: assign pid=%s ok=%s" % (proc.pid, bool(ok)))
+    except Exception as e:
+        _gv_log("job: attach failed %r" % (e,))
+
+
+def _close_previous_shell():
+    """只关闭「上一次启动、本程序自己拉起且仍残留」的浏览器外壳。
+
+    识别条件三层同时满足才动手：pid 来自本程序写的 pid 文件、该进程确实是
+    msedge/chrome、且它名下存在标题含「游匣」的窗口。不做全局标题扫描，因此
+    用户自己的浏览器即使开着同名页面也不会被关掉。
+    """
+    if os.name != "nt" or not _user32:
+        return
+    try:
+        with open(SHELL_PID_FILE, encoding="utf-8") as f:
+            pid = int(f.read().strip() or 0)
+    except Exception:
+        return
+    if not pid:
+        return
+    try:
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        k.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD)]
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+        h = k.OpenProcess(0x1000, False, pid)      # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return
+        try:
+            code = wintypes.DWORD()
+            if not k.GetExitCodeProcess(h, ctypes.byref(code)) or code.value != 259:
+                return                                  # 259 = STILL_ACTIVE
+            n = wintypes.DWORD(1024)
+            buf = ctypes.create_unicode_buffer(1024)
+            if not k.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                return
+            if os.path.basename(buf.value).lower() not in ("msedge.exe", "chrome.exe"):
+                return
+        finally:
+            k.CloseHandle(h)
+        wins = [w for w in enum_top_windows(pid, include_hidden=True)
+                if any(key in w[2] for key in BROWSER_TITLE_KEYS)]
+        if not wins:
+            return
+        for hwnd, _area, _title, _vis in wins:
             try:
-                n = _user32.GetWindowTextLengthW(hwnd)
-                if n <= 0:
-                    return True
-                buf = ctypes.create_unicode_buffer(n + 1)
-                _user32.GetWindowTextW(hwnd, ctypes.cast(buf, ctypes.c_void_p), n + 1)
-                if "游匣" in buf.value:
-                    hwnds.append(int(hwnd))
+                _user32.PostMessageW(hwnd, 0x0010, 0, 0)    # WM_CLOSE
             except Exception:
                 pass
-            return True
-        _user32.EnumWindows(_cb, 0)
+        _gv_log("closed previous shell pid=%s windows=%d" % (pid, len(wins)))
+        time.sleep(0.4)                                 # 让旧 profile 锁释放
     except Exception as e:
-        _gv_log("cleanup orphan windows: enum failed %r" % (e,))
-        return
-
-    if not hwnds:
-        return
-
-    pids = set()
-    for hwnd in hwnds:
-        try:
-            _user32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
-            pid = wintypes.DWORD()
-            _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if pid.value:
-                pids.add(int(pid.value))
-        except Exception:
-            pass
-
-    # WM_CLOSE 生效需要一点时间；仍存活的窗口进程强杀兜底（GameBox 用独立
-    # user-data-dir 的 Edge 实例，强杀不影响用户正常浏览器）。
-    if pids:
-        time.sleep(0.4)
-        try:
-            k = ctypes.WinDLL("kernel32", use_last_error=True)
-            k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-            k.OpenProcess.restype = wintypes.HANDLE
-            k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-            k.TerminateProcess.restype = wintypes.BOOL
-            k.CloseHandle.argtypes = [wintypes.HANDLE]
-            PROCESS_TERMINATE = 0x0001
-            for pid in pids:
-                try:
-                    h = k.OpenProcess(PROCESS_TERMINATE, False, pid)
-                    if h:
-                        k.TerminateProcess(h, 1)
-                        k.CloseHandle(h)
-                except Exception:
-                    pass
-        except Exception as e:
-            _gv_log("cleanup orphan windows: terminate failed %r" % (e,))
-
-    _gv_log("cleaned %d orphan GameBox window(s)" % len(hwnds))
+        _gv_log("close previous shell failed: %r" % (e,))
 
 
 def acquire_single_instance():
@@ -280,7 +343,15 @@ def activate_existing_instance():
         op.open("http://127.0.0.1:%d/api/show" % port, timeout=1.5).read()
     except Exception:
         pass
-    hwnd = browser_main_hwnd()
+    # 只用运行实例自己记录的浏览器 pid 定位窗口，不做全局标题匹配：
+    # 用户自己的浏览器里可能有标题含「游匣」的页面，不能拿来置顶。
+    pid = 0
+    try:
+        with open(SHELL_PID_FILE, encoding="utf-8") as f:
+            pid = int(f.read().strip() or 0)
+    except Exception:
+        pid = 0
+    hwnd = browser_main_hwnd(pid) if pid else None
     if hwnd:
         win_show(hwnd, True)
         win_foreground(hwnd)
@@ -1546,14 +1617,30 @@ class WebShell(QObject):
                 "--autoplay-policy=no-user-gesture-required",
                 "--disable-features=msEdgeSidebarV2,msImplicitSignin,msEdgeSignIn"]
         try:
+            # 上一次异常退出若留下自己的浏览器外壳，先按 pid 精确关掉，给新窗口腾出
+            # profile 锁；只会命中本程序记录的进程，不会碰用户的浏览器。
+            _close_previous_shell()
             self.proc = subprocess.Popen(args)
             self.hidden = False
             _gv_log("start: browser pid=%s port=%s" % (self.proc.pid, self.server.port))
         except Exception as e:
             _gv_log("start: Popen FAILED %r" % (e,))
             return False
+        # 归属关系交给系统：宿主消失时由 Job 一并结束该浏览器进程（不再扫描/强杀窗口）
+        attach_browser_to_job(self.proc)
+        try:
+            with open(SHELL_PID_FILE, "w", encoding="utf-8") as f:
+                f.write(str(self.proc.pid))
+        except Exception:
+            pass
         self._timer.start()
         return True
+
+    def _forget_pid_file(self):
+        try:
+            os.remove(SHELL_PID_FILE)
+        except Exception:
+            pass
 
     def stop(self):
         self._timer.stop()
@@ -1564,6 +1651,7 @@ class WebShell(QObject):
                 pass
         self.proc = None
         self.hidden = False
+        self._forget_pid_file()
 
     def _strict_hwnd(self):
         """只按本进程 pid 找窗口；不做全局标题回退，避免误动其它实例的窗口。"""
@@ -1643,6 +1731,7 @@ class WebShell(QObject):
         if self.proc.poll() is not None:
             self._timer.stop()
             self.proc = None
+            self._forget_pid_file()
             self.win.on_window_closed()
             return
         if self._geo_pending:
@@ -2955,8 +3044,6 @@ def main():
         time.sleep(0.2)
     if restart:
         _gv_log("main: resumed after self-update")
-    # 启动新窗口前清理上次异常退出残留的 GameBox 浏览器窗口（孤儿 Edge --app）
-    _cleanup_orphan_browser_windows()
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)

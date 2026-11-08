@@ -3,7 +3,7 @@
 
 #define MyAppName "游匣"
 #define MyAppVersion "1.0"
-#define MyAppPublisher "zxc4415"
+#define MyAppPublisher "zxc441521"
 #define MyAppExeName "GameBox.exe"
 
 [Setup]

@@ -968,7 +968,7 @@
                   <div><span>收藏</span><b id="aboutFavs"></b></div>
                 </div>
                 <div class="about-legal">封面与游戏资料版权归各自权利人所有，仅用于识别与介绍。与 Valve / Steam 及任何游戏发行商均无关联。不提供、不下载、不分发任何游戏本体。MIT 许可证。</div>
-                <div class="about-sign">Made with care by <a href="#" id="aboutSign">@zxc441521</a> · github.com/zxc441521</div>
+                <div class="about-sign">Made with care by <a href="#" id="aboutSign">@zxc441521</a> · <span id="aboutDomain">github.com/zxc441521</span></div>
               </div>
             </div>
           </section>
@@ -1648,15 +1648,29 @@
       if (e.target === $("catMask")) $("catMask").classList.remove("show");
     });
 
-    /* ===== 签名链接（统一走后端用系统默认浏览器打开） ===== */
-    [["brandGithub", "authorUrl"], ["footAuthor", "authorUrl"],
-     ["aboutGithub", "authorUrl"], ["aboutSign", "authorUrl"]].forEach(([id, key]) => {
+    /* ===== 作者签名：文本与链接统一取后端 SET，换账号只改 main.py ===== */
+    function applySignature() {
+      const name = "@" + String(SET.author || "zxc441521").replace(/^@+/, "");
+      ["footAuthor", "aboutGithub", "aboutSign"].forEach(id => {
+        const el = $(id);
+        if (el) el.textContent = name;
+      });
+      const brand = document.querySelector("#brandGithub span");
+      if (brand) brand.textContent = name;
+      const dom = $("aboutDomain");
+      if (dom) {
+        dom.textContent = String(SET.authorUrl || "https://github.com/zxc441521")
+          .replace(/^https?:\/\//, "").replace(/\/+$/, "");
+      }
+    }
+    applySignature();
+    ["brandGithub", "footAuthor", "aboutGithub", "aboutSign"].forEach(id => {
       const el = $(id);
-      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET[key] || "https://github.com/zxc441521"); };
+      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET.authorUrl || "https://github.com/zxc441521"); };
     });
     [["footRepo", "repoUrl"], ["aboutRepo", "repoUrl"]].forEach(([id, key]) => {
       const el = $(id);
-      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET[key] || "https://github.com/zxc441521/GameBox"); };
+      if (el) el.onclick = e => { e.preventDefault(); gv("openUrl", SET.repoUrl || "https://github.com/zxc441521/GameBox"); };
     });
 
     /* ===== 详情弹窗事件 ===== */
@@ -1826,6 +1840,7 @@
           lastSettingsRaw = t;
           try {
             SET = JSON.parse(t) || {};
+            applySignature();
             if (SET.view && SET.view !== state.view) {
               state.view = SET.view;
               $("btnView").textContent = state.view === "grid" ? "▦" : "☰";
