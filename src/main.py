@@ -1157,9 +1157,10 @@ GAME_DIR_HINTS = frozenset((
     "binaries", "localization", "movies", "savegames",
 ))
 LIB_DIR_MARKS = frozenset((
+    # 只保留明确的发行平台库目录；通用的 game/games/游戏 会把软件目录也抬高成强命中
     "steamapps", "steamlibrary", "common", "epic games", "gog games",
     "xboxgames", "origin games", "ea games", "ubisoft connect", "battle.net",
-    "riot games", "gamelibrary", "games", "game", "游戏",
+    "riot games", "gamelibrary",
 ))
 NOISE_WORDS = ("setup", "install", "driver", "redist", "tool", "update",
                "patch", "crash", "report", "helper", "unins")
@@ -1295,20 +1296,28 @@ def scan_disk_roots(drives=None, progress=None, meta_names=None,
     for key, rec in parents.items():
         p = rec["path"]
         strong, weak = len(rec["strong"]), len(rec["weak"])
-        if strong == 0 and weak < 2:      # 单个弱命中多为普通软件目录
-            pname = os.path.basename(p.rstrip("\\/")).lower()
-            if weak < 1 or not any(w in pname for w in
-                                   ("game", "游戏", "库", "steam", "epic", "gog")):
-                continue
-        is_root = os.path.normcase(os.path.abspath(p)) in system_drives or (
-            len(p.rstrip("\\/")) <= 3 and p.rstrip("\\/").endswith(":"))
-        if os.path.normcase(os.path.abspath(p)) in system_drives:
-            continue                       # 系统盘根不整盘加入，避免海量误判
-        if is_root and strong + weak < 3:
+        parts = [x.lower() for x in p.rstrip("\\/").split(os.sep) if x]
+        pname = parts[-1] if parts else ""
+        abs_p = os.path.normcase(os.path.abspath(p))
+        # 盘符根与系统盘根一律不自动加入：整盘扫描会把软件/系统目录全当游戏
+        if abs_p in system_drives or (
+                len(p.rstrip("\\/")) <= 3 and p.rstrip("\\/").endswith(":")):
             continue
-        segs = [x.lower() for x in p.rstrip("\\/").split(os.sep) if x]
-        if segs and (segs[-1] in DISK_SCAN_SKIP
-                     or (len(segs) > 1 and segs[-2] in DISK_SCAN_SKIP)):
+        # 回收站、GUID 目录、随机串临时目录显然不是游戏库
+        if any(s.startswith("{") or "recycle" in s or "回收" in s
+               or re.fullmatch(r"(?=.*\d)[a-z0-9]{12,}", s) for s in parts):
+            continue
+        drive = os.path.splitdrive(p)[0] + "\\"
+        on_system = os.path.normcase(os.path.abspath(drive)) in system_drives
+        known_lib = bool(set(parts) & LIB_DIR_MARKS)
+        game_word = any(w in pname for w in ("game", "游戏", "库", "steam", "epic", "gog"))
+        # 系统盘上只认明确的平台库 / 强命中 / 成规模的游戏合集目录
+        if on_system and not (known_lib or strong >= 1 or (weak >= 3 and game_word)):
+            continue
+        if strong == 0 and weak < 3 and (weak < 2 or not game_word):
+            continue
+        if parts and (parts[-1] in DISK_SCAN_SKIP
+                      or (len(parts) > 1 and parts[-2] in DISK_SCAN_SKIP)):
             continue
         candidates.append((p, strong * 2 + weak, strong + weak))
 
