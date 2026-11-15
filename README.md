@@ -7,11 +7,13 @@
 **免登录、无账号、不上传任何数据**，所有配置与记录都留在你自己的电脑上。
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/Version-1.0-66C0F4?style=flat-square">
+  <img alt="Version" src="https://img.shields.io/badge/Version-1.1-66C0F4?style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows-75B022?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-8F98A0?style=flat-square">
 </p>
+
+> **v1.1 更新**：新增「一键扫描全盘」自动发现游戏目录并整理扫描路径；配置与缓存统一存放到「文档\GameBox」，桌面不再生成数据文件。
 
 ![游匣主界面](docs/preview.jpg)
 
@@ -23,18 +25,18 @@
 
 | 形态 | 文件 | 说明 |
 |---|---|---|
-| 单文件便携版 | `GameBox-Portable-v1.0.exe` | **单个 exe，免安装**。放在桌面、文档或 U 盘里双击即可运行；配置、缓存、壁纸都写在 exe 旁边，拷走 exe 就带走了整个游戏库 |
+| 单文件便携版 | `GameBox-Portable-v1.1.exe` | **单个 exe，免安装**。放在桌面、文档或 U 盘里双击即可运行；配置、缓存、壁纸统一存放在「文档\GameBox」，桌面不再产生数据文件 |
 
 程序**不内嵌浏览器运行时**，界面借用系统已安装的 Microsoft Edge / Chrome，因此体积很小（约 37 MB）。本项目仅交付现成 exe，不提供源码编译入口与安装程序。
 
 **运行要求**：Windows 10 / 11，且已安装 Microsoft Edge 或 Google Chrome。找不到浏览器时会给出提示并退出。
 
-> 便携版请放在有写入权限的目录。若放在 `C:\Program Files` 等受保护位置，程序会自动把数据改存到 `%APPDATA%\游匣\`。
+> 用户数据与 exe 位置解耦：无论把便携版放在哪里，配置与缓存都写入「文档\GameBox」；文档不可写时自动回退到 `%APPDATA%\GameBox\`，最后才回退程序目录。
 
 ### 第一次打开
 
 1. 下载并双击便携版，稍等片刻出现一个**无地址栏的窗口**。
-2. 打开右上角「设置」→「游戏库」，添加你的游戏目录，点「保存并重新扫描」。
+2. 打开右上角「设置」→「游戏库」，点「一键扫描全盘」自动整理扫描路径，也可以手动「添加文件夹」后点「保存并重新扫描」。
 3. 每个扫描路径下的**一级子文件夹**被识别为一款游戏；游戏名、评分、封面会自动补全。
 4. 悬停卡片点「启动」，或点开卡片查看商店式详情页。
 
@@ -201,7 +203,7 @@
 | `media/wallpapers/` `media/shots/` | 壁纸、每款游戏的截图副本 |
 | `data/games.json` | 内置 206 款游戏元数据；评分为 Metacritic 媒体均分（0–100），优先 PC 平台 |
 
-数据优先写在程序目录，不可写时回退到 `%APPDATA%\游匣\`。「设置 → 关于」页会直接显示当前数据目录。
+以上文件统一存放在「文档\GameBox」（Windows「文档」目录，兼容 OneDrive 重定向）。文档不可写时回退 `%APPDATA%\GameBox\`，最后回退程序目录。「设置 → 关于」页会显示当前数据目录。
 
 ---
 

@@ -2,7 +2,7 @@
 ; 说明：本项目不提供编译入口，此文件仅保留版本信息配置
 
 #define MyAppName "游匣"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.1"
 #define MyAppPublisher "zxc441521"
 #define MyAppExeName "GameBox.exe"
 

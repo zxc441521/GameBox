@@ -1580,6 +1580,8 @@
     }
     /* ===== 一键全盘扫描：后台整理路径，前端轮询进度与结果 ===== */
     let diskScanTimer = null;
+    let diskScanWaiting = false;   // 已发出扫描请求，等待后端接手
+    let diskScanIdleTries = 0;
     function setDiskScanBusy(busy) {
       const b = $("btnScanDisks");
       b.disabled = busy;
@@ -1617,15 +1619,32 @@
     }
     function pollDiskScan() {
       fetch("/api/disk-scan").then(r => r.json()).then(d => {
+        const state = d && d.state;
+        // 动作还在 UI 线程排队时状态仍是 idle，继续等而不是误判为结束
+        if (diskScanWaiting && state === "idle") {
+          diskScanIdleTries++;
+          if (diskScanIdleTries <= 12) {
+            if (!diskScanTimer) diskScanTimer = setInterval(pollDiskScan, 700);
+            return;
+          }
+          diskScanWaiting = false;
+          if (diskScanTimer) { clearInterval(diskScanTimer); diskScanTimer = null; }
+          setDiskScanBusy(false);
+          $("diskScanInfo").textContent = "扫描未能启动，请重试";
+          return;
+        }
+        diskScanIdleTries = 0;
         renderDiskScan(d);
-        if (d && d.state === "running") {
+        if (state === "running") {
           if (!diskScanTimer) diskScanTimer = setInterval(pollDiskScan, 700);
         } else {
+          diskScanWaiting = false;
           if (diskScanTimer) { clearInterval(diskScanTimer); diskScanTimer = null; }
           setDiskScanBusy(false);
           syncSettings(); refreshGames();
         }
       }).catch(() => {
+        diskScanWaiting = false;
         if (diskScanTimer) { clearInterval(diskScanTimer); diskScanTimer = null; }
         setDiskScanBusy(false);
       });
@@ -1653,7 +1672,9 @@
     $("btnSaveRoots").onclick = () => { gv("setRoots", collectRoots()); toast("已保存，正在重新扫描…"); refreshGames(); };
     $("btnPickRoot").onclick = () => { gv("setRoots", collectRoots()); gv("pickRoot", "", true); refreshGames(); };
     $("btnScanDisks").onclick = () => {
-      if (diskScanTimer) return;
+      if (diskScanTimer || diskScanWaiting) return;
+      diskScanWaiting = true;
+      diskScanIdleTries = 0;
       setDiskScanBusy(true);
       $("diskScanInfo").textContent = "正在扫描本地磁盘…";
       gv("scanDisks");

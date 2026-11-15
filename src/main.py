@@ -375,7 +375,7 @@ from PyQt5.QtWidgets import QSystemTrayIcon
 WEB_UI_AVAILABLE = True  # 界面由系统浏览器渲染
 
 APP_NAME = "游匣"
-VERSION = "1.0"
+VERSION = "1.1"
 
 if getattr(sys, "frozen", False):
     PROGRAM_DIR = os.path.dirname(os.path.abspath(sys.executable))
@@ -1864,6 +1864,12 @@ class WebBridgeServer(threading.Thread):
             value = body.get("value", "")
         except Exception as e:
             return self._send(h, 400, json.dumps({"error": str(e)}))
+
+        # 全盘扫描动作在 UI 线程排队执行，这里先同步置 running，
+        # 避免前端第一次轮询拿到 idle 就误以为扫描结束。
+        if action == "scanDisks" and not self.win._disk_scan_busy:
+            with self.win._disk_scan_lock:
+                self.win.disk_scan = {"state": "running", "dirs": 0, "current": ""}
 
         # 文件对话框需等用户选完再响应，网页遮罩与窗口禁用才可同步解除
         if action in self.FILE_ACTIONS:
