@@ -518,6 +518,16 @@
     color: var(--text); background: var(--bg-card); border: 1px solid var(--border-sub);
     border-radius: 4px; cursor: pointer; }
   .root-row button:hover { border-color: var(--accent); }
+  .btn:disabled { opacity: .6; cursor: progress; }
+  .scan-info { margin-top: 2px; font-size: 12px; color: var(--muted); line-height: 1.65; }
+  .scan-info:empty { display: none; }
+  .scan-info b { color: var(--text-bright); font-weight: 600; }
+  .scan-info summary { cursor: pointer; color: var(--accent); margin-top: 4px; }
+  .scan-info .hit-list { max-height: 170px; overflow: auto; padding: 6px 9px; margin-top: 5px;
+    border: 1px solid var(--border-sub); border-radius: 5px; background: var(--bg-deep); }
+  .scan-info .hit-row { display: flex; gap: 10px; padding: 3px 0; font-size: 11.5px; }
+  .scan-info .hit-row span:first-child { flex: 1; min-width: 0; word-break: break-all; color: var(--text); }
+  .scan-info .hit-row span:last-child { color: var(--muted); text-align: right; }
   .mini-list { display: flex; flex-direction: column; gap: 4px; }
   .mini-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
     font-size: 12px; background: var(--bg-card); border: 1px solid var(--border-sub); border-radius: 4px; }
@@ -846,12 +856,14 @@
             <div class="set-grid">
               <div class="set-card span2">
                 <h3>扫描路径</h3>
-                <p class="desc">每个路径下的一级子文件夹会被识别为一款游戏。修改后点「保存并重新扫描」生效。</p>
+                <p class="desc">每个路径下的一级子文件夹会被识别为一款游戏。修改后点「保存并重新扫描」生效；「一键扫描全盘」会自动遍历各磁盘（含子文件夹内容），整理出可用路径。</p>
                 <div id="rootList" class="root-list"></div>
                 <div class="btn-row">
                   <button class="btn" id="btnPickRoot">+ 添加文件夹</button>
+                  <button class="btn" id="btnScanDisks">一键扫描全盘</button>
                   <button class="btn btn-green" id="btnSaveRoots">保存并重新扫描</button>
                 </div>
+                <div id="diskScanInfo" class="scan-info"></div>
               </div>
               <div class="set-card span2">
                 <h3>游戏导入</h3>
@@ -1492,6 +1504,7 @@
     }
     function openSettings() {
       renderSettings();
+      pollDiskScan();
       $("setMask").classList.add("show");
       const act = document.querySelector(".nav-item.active");
       applyTabTitle(act ? act.dataset.tab : "library");
@@ -1565,6 +1578,58 @@
       return [...$("rootList").querySelectorAll(".root-in")]
         .map(x => x.value.trim()).filter(Boolean);
     }
+    /* ===== 一键全盘扫描：后台整理路径，前端轮询进度与结果 ===== */
+    let diskScanTimer = null;
+    function setDiskScanBusy(busy) {
+      const b = $("btnScanDisks");
+      b.disabled = busy;
+      b.textContent = busy ? "正在扫描全盘…" : "一键扫描全盘";
+    }
+    function renderDiskScan(d) {
+      const box = $("diskScanInfo");
+      if (!d || d.state === "idle") { box.innerHTML = ""; return; }
+      if (d.state === "running") {
+        box.textContent = "正在扫描 " + (d.drives || []).join(" ") +
+          " · 已浏览 " + (d.dirs || 0).toLocaleString() + " 个目录" +
+          (d.current ? " · " + d.current : "");
+        return;
+      }
+      if (d.state === "error") {
+        box.textContent = "全盘扫描失败：" + (d.error || "未知错误");
+        return;
+      }
+      const roots = d.roots || [], hits = d.hits || {}, added = d.added || [];
+      let s = "全盘扫描完成 · 浏览 <b>" + (d.dirs || 0).toLocaleString() +
+        "</b> 个目录 · 发现 <b>" + (d.games || 0) + "</b> 个游戏目录 · 整理出 <b>" +
+        roots.length + "</b> 个路径 · 新增 <b>" + added.length + "</b> 个 · 耗时 " +
+        (d.elapsed || 0) + "s";
+      if (d.truncated) s += " · 已达扫描上限，部分目录未覆盖";
+      if (roots.length) {
+        s += "<details><summary>查看整理出的路径与命中内容</summary><div class='hit-list'>" +
+          roots.map(r => {
+            const list = hits[r] || [];
+            return "<div class='hit-row'><span>" + esc(r) + "</span><span>" +
+              list.length + " 项" + (list.length ? "：" + esc(list.slice(0, 6).join("、")) : "") +
+              "</span></div>";
+          }).join("") + "</div></details>";
+      }
+      box.innerHTML = s;
+    }
+    function pollDiskScan() {
+      fetch("/api/disk-scan").then(r => r.json()).then(d => {
+        renderDiskScan(d);
+        if (d && d.state === "running") {
+          if (!diskScanTimer) diskScanTimer = setInterval(pollDiskScan, 700);
+        } else {
+          if (diskScanTimer) { clearInterval(diskScanTimer); diskScanTimer = null; }
+          setDiskScanBusy(false);
+          syncSettings(); refreshGames();
+        }
+      }).catch(() => {
+        if (diskScanTimer) { clearInterval(diskScanTimer); diskScanTimer = null; }
+        setDiskScanBusy(false);
+      });
+    }
     document.querySelectorAll(".nav-item").forEach(t => t.onclick = () => {
       document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("active", x === t));
       document.querySelectorAll(".tab-page").forEach(p =>
@@ -1587,6 +1652,13 @@
     });
     $("btnSaveRoots").onclick = () => { gv("setRoots", collectRoots()); toast("已保存，正在重新扫描…"); refreshGames(); };
     $("btnPickRoot").onclick = () => { gv("setRoots", collectRoots()); gv("pickRoot", "", true); refreshGames(); };
+    $("btnScanDisks").onclick = () => {
+      if (diskScanTimer) return;
+      setDiskScanBusy(true);
+      $("diskScanInfo").textContent = "正在扫描本地磁盘…";
+      gv("scanDisks");
+      setTimeout(pollDiskScan, 250);
+    };
     $("btnPickGame").onclick = () => { gv("pickGame", "", true); refreshGames(); };
     $("btnImportSteam").onclick = () => { gv("importSteam"); toast("正在检测 Steam 库…"); refreshGames(); };
     $("btnDark").onclick = () => { applyTheme("dark"); gv("theme", "dark"); };

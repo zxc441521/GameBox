@@ -378,30 +378,68 @@ APP_NAME = "游匣"
 VERSION = "1.0"
 
 if getattr(sys, "frozen", False):
-    APP_DIR = os.path.dirname(sys.executable)
+    PROGRAM_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
     here = os.path.dirname(os.path.abspath(__file__))
-    APP_DIR = os.path.dirname(here) if os.path.basename(here).lower() == "src" else here
+    PROGRAM_DIR = os.path.dirname(here) if os.path.basename(here).lower() == "src" else here
+APP_DIR = PROGRAM_DIR
 DATA_DIR = os.path.join(APP_DIR, "data")
 if not os.path.isdir(DATA_DIR) and hasattr(sys, "_MEIPASS"):
     DATA_DIR = os.path.join(sys._MEIPASS, "data")
 
 
-def _config_dir():
-    """配置文件目录：程序目录可写则用程序目录，否则回退到 %APPDATA%。"""
-    base = APP_DIR
+def _documents_dir():
+    """Windows 真实「文档」目录（兼容 OneDrive / 手动重定向）。"""
     try:
-        probe = os.path.join(APP_DIR, ".write_test")
-        with open(probe, "w") as f:
-            f.write("")
-        os.remove(probe)
+        buf = ctypes.create_unicode_buffer(1024)
+        # CSIDL_PERSONAL = 5
+        if ctypes.windll.shell32.SHGetFolderPathW(0, 5, 0, 0, buf) == 0 and buf.value:
+            return buf.value
     except Exception:
-        base = os.path.join(os.environ.get("APPDATA", APP_DIR), APP_NAME)
+        pass
+    try:
+        p = os.path.join(os.path.expanduser("~"), "Documents")
+        return p if os.path.isdir(p) else None
+    except Exception:
+        return None
+
+
+_CONFIG_DIR_CACHE = None
+
+
+def _config_dir():
+    """用户数据统一放「文档\\GameBox」；不可写时回退 %APPDATA%，最后才用程序目录。
+
+    便携版以前把 config / db / 缓存直接写在 exe 同目录（桌面），这里改成
+    专用数据目录，桌面只保留 exe 本身。结果缓存，保证 config、封面、DB 同目录。
+    """
+    global _CONFIG_DIR_CACHE
+    if _CONFIG_DIR_CACHE:
+        return _CONFIG_DIR_CACHE
+    cands = []
+    override = os.environ.get("GV_DATA_DIR")   # 测试 / 高级用户可显式指定
+    if override:
+        cands.append(override)
+    docs = _documents_dir()
+    if docs:
+        cands.append(os.path.join(docs, "GameBox"))
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        cands.append(os.path.join(appdata, "GameBox"))
+    cands.append(APP_DIR)
+    for base in cands:
         try:
             os.makedirs(base, exist_ok=True)
+            probe = os.path.join(base, ".gb_write_test")
+            with open(probe, "w", encoding="utf-8") as f:
+                f.write("")
+            os.remove(probe)
+            _CONFIG_DIR_CACHE = os.path.abspath(base)
+            return _CONFIG_DIR_CACHE
         except Exception:
-            base = APP_DIR
-    return base
+            continue
+    _CONFIG_DIR_CACHE = APP_DIR
+    return _CONFIG_DIR_CACHE
 
 
 CONFIG_PATH = os.path.join(_config_dir(), "config.json")
@@ -432,6 +470,10 @@ EXCLUDE = {
     "dumpstack.log.tmp", "boottel.dat", "$windows.~ws",
     "rts", "xiao", "steamlibrary", "steamapps",
     "gamebox", "游匣", "gamevault",
+    # 盘符根也作为扫描根时，系统 / 软件目录不能当成一款游戏
+    "windows", "program files", "program files (x86)", "programdata", "perflogs",
+    "users", "appdata", "documents", "desktop", "downloads", "intel", "amd",
+    "nvidia", "msdownld.tmp", "temp", "tmp", "drivers", "boot", "efi",
 }
 EXE_SKIP = ("unins", "uninstall", "setup", "vcredist", "dxsetup", "dxwebsetup",
             "dotnet", "redist", "crashreport", "notification_helper", "oalinst",
@@ -1093,6 +1135,223 @@ def scan_games(roots=None):
     return items
 
 
+# ---------------- 一键全盘扫描：发现游戏目录并整理扫描路径 ----------------
+DISK_SCAN_SKIP = frozenset((
+    "windows", "program files", "program files (x86)", "programdata", "appdata",
+    "perflogs", "system volume information", "$recycle.bin", "recovery", "boot",
+    "efi", "workbuddy", "gamebox", "游匣", "gamevault", "node_modules",
+    ".git", ".svn", ".cache", "cache", "缓存", "temp", "tmp", "documents",
+    "desktop", "downloads", "logs", "log", "crash", "crashes", "reports",
+    "bin", "obj", "packages", "__pycache__", "site-packages", "drivers",
+    "_commonredist", "directx", "redist", "vcredist", "dotnet", "intel", "amd",
+    "nvidia", "msdownld.tmp", "found.000", "found.001", "found.004",
+))
+GAME_FILE_HINTS = frozenset((
+    "steam_appid.txt", "steam_api.dll", "steam_api64.dll", "unityplayer.dll",
+    "unitycrashhandler64.exe", "galaxy.dll", "galaxy64.dll", "gog.dll",
+    "eossdk-win64-shipping.dll", "binkw32.dll", "binkw64.dll", "physx.dll",
+    "xinput1_3.dll", "fmod.dll", "fmod64.dll",
+))
+GAME_DIR_HINTS = frozenset((
+    "data", "content", "paks", "assets", "streamingassets", "engine",
+    "binaries", "localization", "movies", "savegames",
+))
+LIB_DIR_MARKS = frozenset((
+    "steamapps", "steamlibrary", "common", "epic games", "gog games",
+    "xboxgames", "origin games", "ea games", "ubisoft connect", "battle.net",
+    "riot games", "gamelibrary", "games", "game", "游戏",
+))
+NOISE_WORDS = ("setup", "install", "driver", "redist", "tool", "update",
+               "patch", "crash", "report", "helper", "unins")
+
+
+def _norm_name(name):
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", str(name).lower())
+
+
+def _is_ancestor(a, b):
+    """a 是否为 b 自身或上级目录（大小写不敏感）。"""
+    x = os.path.normcase(os.path.abspath(a)).rstrip("\\/")
+    y = os.path.normcase(os.path.abspath(b)).rstrip("\\/")
+    return y == x or y.startswith(x + os.sep)
+
+
+def fixed_drives():
+    """本地固定磁盘根路径（排除光驱 / 网络盘 / U 盘）。"""
+    if os.name != "nt":
+        return [os.path.abspath(os.sep)]
+    try:
+        k32 = ctypes.windll.kernel32
+        mask = k32.GetLogicalDrives()
+        out = []
+        for i in range(26):
+            if not (mask >> i) & 1:
+                continue
+            d = "%s:\\" % chr(65 + i)
+            if k32.GetDriveTypeW(ctypes.c_wchar_p(d)) == 3:   # DRIVE_FIXED
+                out.append(d)
+        return out
+    except Exception:
+        d = os.path.splitdrive(os.path.abspath(sys.executable))[0]
+        return [d + "\\"] if d else []
+
+
+def _game_dir_score(path, name, files, dirs, meta_norm):
+    """目录像不像一款游戏：0=不算，1=弱命中，>=2=强命中。"""
+    exes = [f for f in files if f.endswith(".exe")
+            and not any(w in f for w in EXE_SKIP)]
+    if not exes:
+        return 0
+    score = 1
+    if files & GAME_FILE_HINTS:
+        score += 2
+    if dirs & GAME_DIR_HINTS:
+        score += 1
+    parts = {p.lower() for p in path.split(os.sep)}
+    if parts & LIB_DIR_MARKS:
+        score += 2
+    if meta_norm and _norm_name(name) in meta_norm:
+        score += 2
+    if any(w in name.lower() for w in NOISE_WORDS):
+        score -= 2
+    return score
+
+
+def scan_disk_roots(drives=None, progress=None, meta_names=None,
+                    max_seconds=25, max_dirs=60000, max_depth=5, max_roots=40):
+    """遍历本地磁盘，找出游戏文件夹，整理出去重合并后的扫描根路径。
+
+    返回 roots（整理结果）、hits（每个根下命中的游戏文件夹名）、dirs/games/elapsed
+    等统计；纯文件遍历，不触碰配置，可在后台线程调用。
+    """
+    t0 = time.time()
+    if drives is None:
+        drives = fixed_drives()
+    if meta_names is None:
+        try:
+            meta_names = {_norm_name(k) for k in load_meta()}
+        except Exception:
+            meta_names = set()
+    meta_norm = {_norm_name(n) for n in meta_names if _norm_name(n)}
+
+    parents = {}       # normcase(父目录) -> {"path", "strong": [], "weak": []}
+    dirs_done = 0
+    games = 0
+    truncated = False
+    system_drives = {os.path.normcase(os.path.abspath(d))
+                     for d in drives if os.path.isdir(os.path.join(d, "Windows"))}
+
+    for drive in drives:
+        stack = [(drive, 0)]
+        while stack:
+            if time.time() - t0 > max_seconds or dirs_done >= max_dirs:
+                truncated = True
+                break
+            cur, depth = stack.pop()
+            try:
+                entries = list(os.scandir(cur))
+            except (OSError, ValueError):
+                continue
+            dirs_done += 1
+            if progress and dirs_done % 40 == 0:
+                progress(dirs_done, cur)
+            files, subdirs = set(), set()
+            for e in entries:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        subdirs.add(e.name.lower())
+                    elif e.is_file(follow_symlinks=False):
+                        files.add(e.name.lower())
+                except OSError:
+                    continue
+            score = _game_dir_score(cur, os.path.basename(cur.rstrip("\\/")) or cur,
+                                    files, subdirs, meta_norm)
+            if score > 0:
+                parent = os.path.dirname(os.path.abspath(cur))
+                key = os.path.normcase(parent)
+                rec = parents.setdefault(key, {"path": parent, "strong": [], "weak": []})
+                name = os.path.basename(cur.rstrip("\\/")) or cur
+                (rec["strong"] if score >= 2 else rec["weak"]).append(name)
+                games += 1
+            if depth < max_depth:
+                for e in entries:
+                    try:
+                        if not e.is_dir(follow_symlinks=False):
+                            continue
+                        low = e.name.lower()
+                        # 注意：EXCLUDE 是「一级子目录是否算一款游戏」的黑名单，
+                        # 全盘遍历不能用它，否则 SteamLibrary / steamapps 会被整体跳过。
+                        if (low in DISK_SCAN_SKIP
+                                or low.startswith((".", "~", "$"))
+                                or low.startswith("found.")):
+                            continue
+                        stack.append((e.path, depth + 1))
+                    except OSError:
+                        continue
+        if truncated:
+            break
+
+    candidates = []
+    for key, rec in parents.items():
+        p = rec["path"]
+        strong, weak = len(rec["strong"]), len(rec["weak"])
+        if strong == 0 and weak < 2:      # 单个弱命中多为普通软件目录
+            pname = os.path.basename(p.rstrip("\\/")).lower()
+            if weak < 1 or not any(w in pname for w in
+                                   ("game", "游戏", "库", "steam", "epic", "gog")):
+                continue
+        is_root = os.path.normcase(os.path.abspath(p)) in system_drives or (
+            len(p.rstrip("\\/")) <= 3 and p.rstrip("\\/").endswith(":"))
+        if os.path.normcase(os.path.abspath(p)) in system_drives:
+            continue                       # 系统盘根不整盘加入，避免海量误判
+        if is_root and strong + weak < 3:
+            continue
+        segs = [x.lower() for x in p.rstrip("\\/").split(os.sep) if x]
+        if segs and (segs[-1] in DISK_SCAN_SKIP
+                     or (len(segs) > 1 and segs[-2] in DISK_SCAN_SKIP)):
+            continue
+        candidates.append((p, strong * 2 + weak, strong + weak))
+
+    # 深浅合并：父目录已经是候选根时丢弃其子目录根
+    candidates.sort(key=lambda x: (len(x[0]), x[0].lower()))
+    roots = []
+    for p, _, _ in candidates:
+        if any(_is_ancestor(q, p) for q in roots):
+            continue
+        roots.append(p)
+    roots.sort(key=lambda p: (p[:2].upper(), p.lower()))
+    roots = roots[:max_roots]
+
+    hits = {r: [] for r in roots}
+    for rec in parents.values():
+        target = next((r for r in roots if _is_ancestor(r, rec["path"])), None)
+        if target:
+            for n in rec["strong"] + rec["weak"]:
+                if n not in hits[target] and len(hits[target]) < 12:
+                    hits[target].append(n)
+    return {
+        "roots": roots, "hits": hits, "games": games, "dirs": dirs_done,
+        "drives": list(drives), "elapsed": round(time.time() - t0, 1),
+        "truncated": truncated,
+    }
+
+
+def merge_scan_roots(existing, found):
+    """把整理结果合并进现有扫描路径；与已有路径互为祖先时不重复添加。"""
+    out = [os.path.normpath(str(x)) for x in existing if str(x).strip()]
+    keys = {os.path.normcase(p) for p in out}
+    added = []
+    for p in found:
+        np = os.path.normpath(p)
+        k = os.path.normcase(np)
+        if k in keys or any(_is_ancestor(q, np) or _is_ancestor(np, q) for q in out):
+            continue
+        out.append(np)
+        keys.add(k)
+        added.append(np)
+    return out, added
+
+
 # ---------------- 数据模型 ----------------
 
 # ==================== 游匣 GameBox · 后端核心 ====================
@@ -1148,6 +1407,39 @@ def _migrate_legacy():
         _gv_log("migrate legacy failed: %r" % (e,))
 
 
+def _migrate_portable_data():
+    """把便携版散落在 exe 同目录（桌面）的旧数据复制进新的文档数据目录。
+
+    只复制不删除：源文件原地保留为备份，避免迁移失败时丢收藏 / 游玩记录。
+    """
+    src, dst = APP_DIR, BASE_DIR
+    if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dst)):
+        return
+    files = ("config.json", "gamebox.db", "gamebox.db-wal", "gamebox.db-shm",
+             "games_cache.json", "meta_cache.json")
+    folders = ("cover_cache", "media")
+    moved = []
+    for name in files:
+        s, d = os.path.join(src, name), os.path.join(dst, name)
+        if os.path.isfile(s) and not os.path.isfile(d):
+            try:
+                shutil.copy2(s, d)
+                moved.append(name)
+            except Exception as e:
+                _gv_log("portable data migrate failed %s: %r" % (name, e))
+    for name in folders:
+        s, d = os.path.join(src, name), os.path.join(dst, name)
+        if os.path.isdir(s) and not os.path.isdir(d):
+            try:
+                shutil.copytree(s, d)
+                moved.append(name + "/")
+            except Exception as e:
+                _gv_log("portable data migrate failed %s: %r" % (name, e))
+    if moved:
+        _gv_log("migrated portable data into %s: %s" % (dst, ", ".join(moved)))
+
+
+_migrate_portable_data()
 _migrate_legacy()
 
 # ---------------- 单一数据源（SQLite） ----------------
@@ -1381,6 +1673,13 @@ class WebBridgeServer(threading.Thread):
                 return self._send(h, 200, json.dumps(w._settings_payload(), ensure_ascii=False))
             except Exception as e:
                 return self._send(h, 200, json.dumps({"error": str(e)}))
+        if path == "/api/disk-scan":
+            try:
+                with w._disk_scan_lock:
+                    snap = dict(w.disk_scan)
+                return self._send(h, 200, json.dumps(snap, ensure_ascii=False))
+            except Exception as e:
+                return self._send(h, 200, json.dumps({"state": "error", "error": str(e)}))
         if path == "/api/theme":
             return self._send(h, 200, json.dumps({"theme": w.config.get("web_theme", "dark")}))
         if path == "/api/update-progress":
@@ -1792,6 +2091,10 @@ class AppCore(QObject):
         self.update_progress = _idle_update_progress()
         self._update_ver = ""
         self._update_busy = False
+        # 一键全盘扫描状态：前端轮询 /api/disk-scan
+        self.disk_scan = {"state": "idle"}
+        self._disk_scan_lock = threading.Lock()
+        self._disk_scan_busy = False
         self.tray = None
         self._sessions = {}        # path -> 启动时间戳，用于「正在游玩」实时计时
         self.shell = WebShell(self)
@@ -1995,6 +2298,68 @@ class AppCore(QObject):
             except Exception:
                 pass
         QApplication.instance().quit()
+
+    # ---------- 一键全盘扫描 ----------
+    def start_disk_scan(self):
+        if self._disk_scan_busy:
+            return
+        self._disk_scan_busy = True
+        with self._disk_scan_lock:
+            self.disk_scan = {"state": "running", "dirs": 0, "current": ""}
+
+        def progress(n, cur):
+            with self._disk_scan_lock:
+                if self.disk_scan.get("state") == "running":
+                    self.disk_scan["dirs"] = n
+                    self.disk_scan["current"] = cur
+
+        def worker():
+            # 可选调试开关：限定磁盘 / 时限，便于冒烟测试与超大硬盘调优
+            kw = {}
+            try:
+                if os.environ.get("GV_DISK_SCAN_DRIVES"):
+                    kw["drives"] = [d.strip() for d in
+                                    os.environ["GV_DISK_SCAN_DRIVES"].split(";") if d.strip()]
+                if os.environ.get("GV_DISK_SCAN_SECONDS"):
+                    kw["max_seconds"] = max(1.0, float(os.environ["GV_DISK_SCAN_SECONDS"]))
+            except (ValueError, TypeError):
+                kw = {}
+            try:
+                res = scan_disk_roots(progress=progress, **kw)
+            except Exception as e:
+                _gv_log("disk scan failed: %r" % (e,))
+                res = {"roots": [], "hits": {}, "games": 0, "dirs": 0,
+                       "drives": [], "elapsed": 0, "truncated": False,
+                       "error": str(e)}
+            self.ui_call.emit(lambda: self._on_disk_scan_done(res))
+
+        threading.Thread(target=worker, daemon=True, name="DiskScan").start()
+
+    def _on_disk_scan_done(self, res):
+        roots, added = merge_scan_roots(
+            self.config.get("scan_roots", []), res.get("roots", []))
+        with self._disk_scan_lock:
+            self.disk_scan = {
+                "state": "error" if res.get("error") else "done",
+                "roots": res.get("roots", []), "hits": res.get("hits", {}),
+                "added": added, "games": res.get("games", 0),
+                "dirs": res.get("dirs", 0), "drives": res.get("drives", []),
+                "elapsed": res.get("elapsed", 0),
+                "truncated": res.get("truncated", False),
+                "error": res.get("error", ""), "current": "",
+                "totalRoots": len(roots),
+            }
+        self._disk_scan_busy = False
+        if added:
+            self.config["scan_roots"] = roots
+            save_config(self.config)
+            # 正好撞上启动扫描时稍后重试，避免新增路径这次不生效
+            if self._scanning:
+                QTimer.singleShot(1200, self.rescan)
+            else:
+                self.rescan()
+        self._notify("全盘扫描完成 · 发现 %d 个游戏目录 · 整理出 %d 个路径（新增 %d 个）" %
+                     (res.get("games", 0), len(res.get("roots", [])), len(added)))
 
     # ---------- 扫描 ----------
     def rescan(self):
@@ -2467,7 +2832,9 @@ class AppCore(QObject):
                     self._notify("已从游戏库移除《%s》" % it["cn"])
                 return
 
-            if action == "rescan":
+            if action == "scanDisks":
+                self.start_disk_scan()
+            elif action == "rescan":
                 self.rescan()
             elif action == "theme":
                 c["web_theme"] = "light" if value == "light" else "dark"
@@ -2807,7 +3174,8 @@ class AppCore(QObject):
         self._update_busy = True
         self._update_ver = info.get("ver") or ""
         # 装到 Program Files 等只读目录时落盘到 %TEMP%，否则下载第一步就会 PermissionError
-        tmp_dir = BASE_DIR if _dir_writable(BASE_DIR) else tempfile.gettempdir()
+        # 更新包属于程序本体，落 exe 同目录；用户数据目录（文档）只放配置与缓存
+        tmp_dir = PROGRAM_DIR if _dir_writable(PROGRAM_DIR) else tempfile.gettempdir()
         tmp = os.path.join(tmp_dir, "GameBox.update.tmp")
         self._set_update_progress("downloading", 0, 0, 0, 0, 0, "正在连接更新服务器…")
 
@@ -3053,8 +3421,7 @@ def _cleanup_stale_installers(dirs=None, current=None, reason="startup"):
     """
     if dirs is None:
         dirs = []
-        for d in (os.path.dirname(os.path.abspath(sys.executable)),
-                  BASE_DIR, tempfile.gettempdir()):
+        for d in (PROGRAM_DIR, BASE_DIR, tempfile.gettempdir()):
             if d and d not in dirs:
                 dirs.append(d)
     removed = []
@@ -3065,7 +3432,7 @@ def _cleanup_stale_installers(dirs=None, current=None, reason="startup"):
         except Exception as e:
             _gv_log("stale installer cleanup failed: %r" % (e,))
     # 更新中断留下的半下载文件（正常流程里它已被 move 成正式 exe）
-    for tmp_dir in dict.fromkeys((BASE_DIR, tempfile.gettempdir())):
+    for tmp_dir in dict.fromkeys((PROGRAM_DIR, BASE_DIR, tempfile.gettempdir())):
         tmp = os.path.join(tmp_dir, "GameBox.update.tmp")
         if os.path.isfile(tmp):
             try:
